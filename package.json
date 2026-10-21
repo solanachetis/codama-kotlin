@@ -1,0 +1,13 @@
+{
+  "name": "codama-kotlin-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node renderer/render.mjs idl/token.json kotlin-demo/src/main/kotlin codama.generated.token",
+    "vectors": "node scripts/vectors.mjs kotlin-demo/src/test/resources/vectors.json"
+  },
+  "devDependencies": {
+    "@solana-program/token": "^0.18.0",
+    "@solana/kit": "^8.5.0"
+  }
+}

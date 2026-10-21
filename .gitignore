@@ -1,0 +1,4 @@
+node_modules/
+kotlin-demo/build/
+kotlin-demo/.gradle/
+kotlin-demo/.kotlin/
