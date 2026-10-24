@@ -11,6 +11,31 @@ Status: **prototype**. Two programs tested end to end:
   simulated a whole vault life built only from this Kotlin code, in one transaction: `MultisigCreateV2` → fund the vault →
   `VaultTransactionCreate` → `ProposalCreate` → `ProposalApprove` → `VaultTransactionExecute` (recipient got 0.005 SOL from the vault).
   `kotlin-demo/src/test/kotlin/SquadsDevnetTest.kt`, run with `SQUADS_DEVNET=1`.
+- **On a real Seeker, on mainnet** (2026-10-24): the Android demo below created a Squads multisig with the generated
+  `multisigCreateV2Instruction`, signed through Mobile Wallet Adapter by Seed Vault Wallet, then read it back with the
+  generated `Multisig` decoder (threshold 1 of 1, permissions 7). Cost: 0.0015 SOL of account rent, no Squads fee.
+
+## Android demo (Seeker)
+
+`android-demo/` is a native Android app (Kotlin, Compose) that compiles the generated sources of `kotlin-demo` as they
+are, with no copy:
+
+- reads Squads' `ProgramConfig` with the generated decoder (creation fee, treasury);
+- builds `multisigCreateV2Instruction` for a 1-of-1 multisig owned by the wallet (the wallet is also the create key,
+  so no extra signer is needed);
+- signs and sends it through **Mobile Wallet Adapter** (Seed Vault Wallet on the Seeker, or any MWA wallet);
+- reads the new multisig back with the generated `Multisig` decoder.
+
+Mainnet by default, devnet as an option. The wallet must be on the same network as the app, or it refuses to sign
+("network mismatch"). Seed Vault Wallet runs on mainnet.
+
+```bash
+cd android-demo && ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+The transaction is compiled by hand (`LegacyTransaction.kt`): the wallet is both a read-only signer (create key) and a
+writable signer (creator), the exact case where `web3-solana` 0.3.1 `Message.Builder` writes a wrong header.
 
 ## Squads v4 in Kotlin
 
@@ -102,4 +127,6 @@ renderer/render.mjs            the generator (~530 lines)
 scripts/anchor-to-codama.mjs   Anchor IDL -> Codama JSON (@codama/nodes-from-anchor)
 scripts/vectors.mjs            reference vectors from the official JS client
 kotlin-demo/                   Gradle project: generated code, Squads helpers, byte-for-byte and devnet tests
+android-demo/                  Android app for the Seeker: the generated Squads client, signed with Mobile Wallet Adapter
+.github/workflows/ci.yml       regenerates the clients, checks they match the committed code, runs the tests
 ```
