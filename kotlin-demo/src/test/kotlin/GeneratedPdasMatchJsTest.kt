@@ -1,3 +1,13 @@
+import codama.generated.seeds.pdas.findConstantBytesPda
+import codama.generated.seeds.pdas.findConstantNumberPda
+import codama.generated.seeds.pdas.findConstantPublicKeyPda
+import codama.generated.seeds.pdas.findConstantStringPda
+import codama.generated.seeds.pdas.findConstantUtf8BytesPda
+import codama.generated.seeds.pdas.findMixedPda
+import codama.generated.seeds.pdas.findProgramIdSeedPda
+import codama.generated.seeds.pdas.findVariableBytesPda
+import codama.generated.seeds.pdas.findVariableNumbersPda
+import codama.generated.seeds.pdas.findVariableStringPda
 import codama.generated.squads.pdas.findMultisigPda
 import codama.generated.squads.pdas.findProgramConfigPda
 import codama.generated.squads.pdas.findProposalPda
@@ -49,6 +59,35 @@ class GeneratedPdasMatchJsTest {
         for (vector in pdas) {
             val id = vector.str("id")
             val pda = kotlinPda(vector)
+            assertEquals(vector.str("address"), pda.base58(), "$id: address")
+            assertEquals(vector["bump"]!!.jsonPrimitive.int, pda.nonce.toInt(), "$id: bump")
+        }
+    }
+
+    /** One PDA per kind of seed (idl/pda-seeds.json), edge values included: empty string, accents, max, negative. */
+    @Test
+    fun everyKindOfSeedMatchesKit() = runBlocking {
+        val cases = Json.parseToJsonElement(javaClass.getResource("/vectors.json")!!.readText())
+            .jsonObject["seedPdas"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(12, cases.size)
+        for (vector in cases) {
+            val s = vector["seeds"]!!.jsonObject
+            val pda = when (vector.str("pda")) {
+                "constantString" -> findConstantStringPda()
+                "constantBytes" -> findConstantBytesPda()
+                "constantUtf8Bytes" -> findConstantUtf8BytesPda()
+                "constantPublicKey" -> findConstantPublicKeyPda()
+                "constantNumber" -> findConstantNumberPda()
+                "programIdSeed" -> findProgramIdSeedPda()
+                "variableString" -> findVariableStringPda(s.str("label"))
+                "variableBytes" -> findVariableBytesPda(s.str("raw").chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+                "variableNumbers" -> findVariableNumbersPda(
+                    s["a"]!!.jsonPrimitive.int.toUShort(), s.str("b").toUInt(), s.str("c").toLong(),
+                )
+                "mixed" -> findMixedPda(s.key("owner"), s["id"]!!.jsonPrimitive.int.toUByte(), s.str("label"))
+                else -> error("no Kotlin call for ${vector.str("pda")}")
+            }
+            val id = vector.str("id")
             assertEquals(vector.str("address"), pda.base58(), "$id: address")
             assertEquals(vector["bump"]!!.jsonPrimitive.int, pda.nonce.toInt(), "$id: bump")
         }

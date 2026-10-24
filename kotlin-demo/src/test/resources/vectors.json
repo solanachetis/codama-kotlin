@@ -774,5 +774,109 @@
       "address": "Hmecd9HN5MG2ZaGBfGSedGM8tKxf4R7StjPSGV4zGaT",
       "bump": 255
     }
+  ],
+  "seedPdas": [
+    {
+      "id": "constantString",
+      "pda": "constantString",
+      "seeds": {},
+      "address": "ywSDMMjJKQ9HsDhr15CXMQXRiyb4uSAPxbyrLUr6cRa",
+      "bump": 255
+    },
+    {
+      "id": "constantBytes",
+      "pda": "constantBytes",
+      "seeds": {},
+      "address": "8AaRRUh1evnrgWZ4qxuG4d5ijENrYcNYYEq4u6dXnuZK",
+      "bump": 253
+    },
+    {
+      "id": "constantUtf8Bytes",
+      "pda": "constantUtf8Bytes",
+      "seeds": {},
+      "address": "E9vxD4CiP9tZ5n2EutwLgoDgSJQYGb3mRzd3voDjuZjy",
+      "bump": 254
+    },
+    {
+      "id": "constantPublicKey",
+      "pda": "constantPublicKey",
+      "seeds": {},
+      "address": "AJPbDoQhXEFNWEvejnw2n9dX2Ht5vpxounKeQqFt9nSF",
+      "bump": 255
+    },
+    {
+      "id": "constantNumber",
+      "pda": "constantNumber",
+      "seeds": {},
+      "address": "Hkh7mKYsZaL1mvtDPJ7dFLU3SvUahmsixVB5EF6reCJG",
+      "bump": 255
+    },
+    {
+      "id": "programIdSeed",
+      "pda": "programIdSeed",
+      "seeds": {},
+      "address": "2PNUiRwcF4AVpNGKA2jtJtnA4aPLwTrSxWCij8tw1mGZ",
+      "bump": 255
+    },
+    {
+      "id": "variableString",
+      "pda": "variableString",
+      "seeds": {
+        "label": "Seeker ✓ é"
+      },
+      "address": "5BoL5Bp2Az1KJWx2ZQrNw9jgufcRqdsEZ1MP9xPHGsFw",
+      "bump": 255
+    },
+    {
+      "id": "variableStringEmpty",
+      "pda": "variableString",
+      "seeds": {
+        "label": ""
+      },
+      "address": "aCcWyfL6MMJPYC3ojWHSMf74aytTDqiuQzGxLnNyYej",
+      "bump": 254
+    },
+    {
+      "id": "variableBytes",
+      "pda": "variableBytes",
+      "seeds": {
+        "raw": "00ff10"
+      },
+      "address": "BXAisfkEe1MWVzxqr8TJhumMvhzMGx1ZnY9CKMQN26K",
+      "bump": 254
+    },
+    {
+      "id": "variableNumbersMax",
+      "pda": "variableNumbers",
+      "seeds": {
+        "a": 65535,
+        "b": 4294967295,
+        "c": "9223372036854775807"
+      },
+      "address": "8kivjdfo26NnmLdb19zMUQ1H92GZtjnkqYHwkmeVEvhW",
+      "bump": 253
+    },
+    {
+      "id": "variableNumbersNegative",
+      "pda": "variableNumbers",
+      "seeds": {
+        "a": 258,
+        "b": 1,
+        "c": "-2"
+      },
+      "address": "23zjNGXrPAvKPqmGjMWUcGtYwoHkfzX3bP1j1v5nZqwD",
+      "bump": 253
+    },
+    {
+      "id": "mixed",
+      "pda": "mixed",
+      "seeds": {
+        "owner": "32ZsJ2yJjwuoBiWE5xnZjG9tKmK3CubbmEzgkQLyQzgD",
+        "id": 200,
+        "label": "vault"
+      },
+      "address": "UrGd3G9rTWbpAkqiHjd7dRyTVEa27ByGwSkWqRK3a6B",
+      "bump": 253
+    }
   ]
 }

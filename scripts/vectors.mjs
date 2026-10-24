@@ -3,8 +3,8 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
-  getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, getU64Encoder, getU8Encoder, getUtf8Encoder,
-  createNoopSigner, some, none, AccountRole,
+  getAddressDecoder, getAddressEncoder, getBase16Encoder, getI64Encoder, getProgramDerivedAddress, getU16Encoder,
+  getU32Encoder, getU64Encoder, getU8Encoder, getUtf8Encoder, createNoopSigner, some, none, AccountRole, Endian,
 } from '@solana/kit';
 import * as token from '@solana-program/token';
 
@@ -95,6 +95,49 @@ const squads = async (id, pdaName, values) => {
   const [address, bump] = await getProgramDerivedAddress({ programAddress: squadsIdl.program.publicKey, seeds });
   return { id, pda: pdaName, seeds: values, address, bump };
 };
+// Every kind of seed the renderer supports (idl/pda-seeds.json), encoded here with Kit's own encoders.
+const seedsIdl = JSON.parse(readFileSync(new URL('../idl/pda-seeds.json', import.meta.url), 'utf8'));
+const numberEncoder = (t) => {
+  const options = { endian: t.endian === 'be' ? Endian.Big : Endian.Little };
+  return { u8: getU8Encoder, u16: getU16Encoder, u32: getU32Encoder, i64: getI64Encoder }[t.format](options);
+};
+const constantBytes = (s) => {
+  const v = s.value;
+  if (v.kind === 'programIdValueNode') return getAddressEncoder().encode(seedsIdl.program.publicKey);
+  if (v.kind === 'stringValueNode') return getUtf8Encoder().encode(v.string);
+  if (v.kind === 'bytesValueNode') return v.encoding === 'base16' ? getBase16Encoder().encode(v.data) : getUtf8Encoder().encode(v.data);
+  if (v.kind === 'publicKeyValueNode') return getAddressEncoder().encode(v.publicKey);
+  if (v.kind === 'numberValueNode') return numberEncoder(s.type).encode(v.number);
+  throw new Error(`no Kit encoder for ${v.kind}`);
+};
+const variableBytes = (s, value) => {
+  if (s.type.kind === 'publicKeyTypeNode') return getAddressEncoder().encode(value);
+  if (s.type.kind === 'stringTypeNode') return getUtf8Encoder().encode(value);
+  if (s.type.kind === 'bytesTypeNode') return getBase16Encoder().encode(value);
+  if (s.type.kind === 'numberTypeNode') return numberEncoder(s.type).encode(s.type.format === 'i64' ? BigInt(value) : value);
+  throw new Error(`no Kit encoder for ${s.type.kind}`);
+};
+const seedCase = async (id, pdaName, values = {}) => {
+  const pda = seedsIdl.program.pdas.find((p) => p.name === pdaName);
+  const seeds = pda.seeds.map((s) => (s.kind === 'constantPdaSeedNode' ? constantBytes(s) : variableBytes(s, values[s.name])));
+  const [address, bump] = await getProgramDerivedAddress({ programAddress: seedsIdl.program.publicKey, seeds });
+  return { id, pda: pdaName, seeds: values, address, bump };
+};
+const seedPdas = await Promise.all([
+  seedCase('constantString', 'constantString'),
+  seedCase('constantBytes', 'constantBytes'),
+  seedCase('constantUtf8Bytes', 'constantUtf8Bytes'),
+  seedCase('constantPublicKey', 'constantPublicKey'),
+  seedCase('constantNumber', 'constantNumber'),
+  seedCase('programIdSeed', 'programIdSeed'),
+  seedCase('variableString', 'variableString', { label: 'Seeker ✓ é' }),
+  seedCase('variableStringEmpty', 'variableString', { label: '' }),
+  seedCase('variableBytes', 'variableBytes', { raw: '00ff10' }),
+  seedCase('variableNumbersMax', 'variableNumbers', { a: 65535, b: 4294967295, c: '9223372036854775807' }),
+  seedCase('variableNumbersNegative', 'variableNumbers', { a: 258, b: 1, c: '-2' }),
+  seedCase('mixed', 'mixed', { owner: addr(30), id: 200, label: 'vault' }),
+]);
+
 const S = { multisig: addr(20), createKey: addr(21) };
 const pdas = await Promise.all([
   ata('ataToken', A.owner, token.TOKEN_PROGRAM_ADDRESS, A.mint),
@@ -111,5 +154,5 @@ const pdas = await Promise.all([
 ]);
 
 mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, JSON.stringify({ addresses: A, instructions, accounts, pdas }, null, 2));
-console.log(`Wrote ${instructions.length} instruction vectors, ${accounts.length} account vectors and ${pdas.length} PDA vectors to ${out}`);
+writeFileSync(out, JSON.stringify({ addresses: A, instructions, accounts, pdas, seedPdas }, null, 2));
+console.log(`Wrote ${instructions.length} instruction vectors, ${accounts.length} account vectors and ${pdas.length + seedPdas.length} PDA vectors to ${out}`);

@@ -12,7 +12,9 @@ if (!idlPath || !outDir || !basePackage) {
 
 const root = JSON.parse(readFileSync(idlPath, 'utf8'));
 if (root.kind !== 'rootNode') throw new Error('expected a Codama rootNode');
-const program = root.program;
+// Codama's JSON leaves out empty lists (a program with no accounts has no "accounts" key).
+const withLists = (p) => ({ accounts: [], instructions: [], definedTypes: [], errors: [], pdas: [], ...p });
+const program = withLists(root.program);
 const unsupported = [];
 
 // ---------- naming ----------
@@ -458,7 +460,7 @@ function seedBytes(seed, params) {
   return `DataWriter().also { w -> ${writeStmts(type, n, pascal(seed.name)).join('; ')} }.toByteArray()`;
 }
 
-const pdaPrograms = [program, ...(root.additionalPrograms || [])];
+const pdaPrograms = [program, ...(root.additionalPrograms || []).map(withLists)];
 for (const p of pdaPrograms) {
   const defaultProgramId = p === program ? `${programObject}.PROGRAM_ID` : `SolanaPublicKey.from("${p.publicKey}")`;
   for (const pda of p.pdas || []) {
