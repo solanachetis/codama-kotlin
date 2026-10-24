@@ -64,3 +64,6 @@ internal class DataReader(private val data: ByteArray, private var offset: Int =
     fun f32(bigEndian: Boolean = false): Float = Float.fromBits(int(4, bigEndian).toInt())
     fun f64(bigEndian: Boolean = false): Double = Double.fromBits(int(8, bigEndian))
 }
+
+/** Constant bytes from the IDL (Anchor discriminators), written in hex. */
+internal fun hex(s: String): ByteArray = ByteArray(s.length / 2) { s.substring(2 * it, 2 * it + 2).toInt(16).toByte() }

@@ -11,6 +11,7 @@ dependencies {
     implementation("com.solanamobile:web3-solana:0.3.1")
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 }
 
 tasks.test {

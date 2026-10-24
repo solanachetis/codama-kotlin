@@ -24,6 +24,8 @@ const camel = (s) => s.charAt(0).toLowerCase() + s.slice(1);
 const ident = (s) => (KOTLIN_KEYWORDS.has(s) ? '`' + s + '`' : s);
 const screaming = (s) => s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
 const programName = pascal(program.name);
+// "squadsMultisigProgram" -> SquadsMultisigProgram, "token" -> TokenProgram (no "ProgramProgram").
+const programObject = programName.endsWith('Program') ? programName : `${programName}Program`;
 
 function kdoc(docs, indent = '') {
   const lines = (docs || []).map((d) => d.replace(/\*\//g, '*&#47;'));
@@ -55,14 +57,25 @@ const be = (node) => (node.endian === 'be' ? 'true' : 'false');
 const definedTypes = new Map(program.definedTypes.map((t) => [t.name, t]));
 const inlineStructs = []; // { name, struct }
 
+// Enums whose variants carry data become sealed classes; plain ones stay Kotlin enums.
+const hasData = (enumType) => enumType.variants.some((v) => v.kind !== 'enumEmptyVariantTypeNode');
+const enumSize = (enumType) => enumType.size || { kind: 'numberTypeNode', format: 'u8', endian: 'le' };
+const isPlainEnumLink = (type) =>
+  type.kind === 'definedTypeLinkNode' && definedTypes.get(type.name).type.kind === 'enumTypeNode' &&
+  !hasData(definedTypes.get(type.name).type);
+
+// Fields and arguments with an "omitted" default (Anchor discriminators) are written as constants, never asked for.
+const isOmitted = (f) => f.defaultValueStrategy === 'omitted' && f.defaultValue;
+
 function fixedSize(type) {
   switch (type.kind) {
     case 'numberTypeNode': return num(type).size;
     case 'publicKeyTypeNode': return 32;
     case 'booleanTypeNode': return num(type.size).size;
+    case 'fixedSizeTypeNode': return type.size;
     case 'definedTypeLinkNode': {
       const t = definedTypes.get(type.name).type;
-      if (t.kind === 'enumTypeNode') return num(t.size).size;
+      if (t.kind === 'enumTypeNode' && !hasData(t)) return num(enumSize(t)).size;
       return fixedSize(t);
     }
     default: unsupported.push(`fixed size of ${type.kind}`); return 0;
@@ -78,6 +91,7 @@ function ktType(type, hint) {
     case 'stringTypeNode': return 'String';
     case 'bytesTypeNode': return 'ByteArray';
     case 'sizePrefixTypeNode': return ktType(type.type, hint);
+    case 'fixedSizeTypeNode': return ktType(type.type, hint);
     case 'optionTypeNode': return `${ktType(type.item, hint)}?`;
     case 'arrayTypeNode': return `List<${ktType(type.item, hint + 'Item')}>`;
     case 'definedTypeLinkNode': return pascal(type.name);
@@ -116,6 +130,11 @@ function writeStmts(type, expr, hint) {
         `w.bytes(${v})`,
       ];
     }
+    case 'fixedSizeTypeNode': {
+      if (type.type.kind !== 'bytesTypeNode') { unsupported.push(`fixed size of ${type.type.kind}`); return []; }
+      const v = freshVar();
+      return [`val ${v} = ${expr}`, `require(${v}.size == ${type.size}) { "expected ${type.size} bytes" }`, `w.bytes(${v})`];
+    }
     case 'optionTypeNode': {
       const p = type.prefix;
       const tagW = (n) => `w.${p.format}(${num(p).lit(n)}${p.format.match(/^[ui]8$/) ? '' : ', bigEndian = ' + be(p)})`;
@@ -139,7 +158,7 @@ function writeStmts(type, expr, hint) {
     }
     case 'definedTypeLinkNode': {
       const t = definedTypes.get(type.name).type;
-      if (t.kind === 'enumTypeNode') return [`w.${t.size.format}(${expr}.ordinal.to${num(t.size).kt}())`];
+      if (isPlainEnumLink(type)) return [`w.${enumSize(t).format}(${expr}.ordinal.to${num(enumSize(t)).kt}())`];
       return [`${expr}.write(w)`];
     }
     case 'structTypeNode': ktType(type, hint); return [`${expr}.write(w)`];
@@ -159,6 +178,9 @@ function readExpr(type, hint) {
       const p = type.prefix;
       return `r.bytes(r.${p.format}(${p.format.match(/^[ui]8$/) ? '' : 'bigEndian = ' + be(p)}).toInt())${type.type.kind === 'stringTypeNode' ? '.decodeToString()' : ''}`;
     }
+    case 'fixedSizeTypeNode':
+      if (type.type.kind !== 'bytesTypeNode') unsupported.push(`fixed size of ${type.type.kind}`);
+      return `r.bytes(${type.size})`;
     case 'optionTypeNode': {
       const p = type.prefix;
       const skip = type.fixed ? `r.skip(${fixedSize(type.item)}); ` : '';
@@ -173,7 +195,7 @@ function readExpr(type, hint) {
     }
     case 'definedTypeLinkNode': {
       const t = definedTypes.get(type.name).type;
-      if (t.kind === 'enumTypeNode') return `${pascal(type.name)}.entries[r.${t.size.format}().toInt()]`;
+      if (isPlainEnumLink(type)) return `${pascal(type.name)}.entries[r.${enumSize(t).format}().toInt()]`;
       return `${pascal(type.name)}.read(r)`;
     }
     case 'structTypeNode': return `${ktType(type, hint)}.read(r)`;
@@ -188,17 +210,35 @@ function valueLiteral(value, type) {
     case 'publicKeyValueNode': return `SolanaPublicKey.from("${value.publicKey}")`;
     case 'booleanValueNode': return `${value.boolean}`;
     case 'stringValueNode': return JSON.stringify(value.string);
+    case 'bytesValueNode':
+      if (value.encoding !== 'base16') { unsupported.push(`bytes value encoding ${value.encoding}`); return null; }
+      return `hex("${value.data}")`;
     default: return null;
   }
 }
 
 // ---------- struct classes (accounts, defined structs, inline structs) ----------
 function structClass(name, struct, docs, extra = '') {
-  const fields = struct.fields.map((f) => ({ name: ident(f.name), type: f.type, kt: ktType(f.type, name + pascal(f.name)), docs: f.docs }));
-  const props = fields.map((f) => `${kdoc(f.docs, '    ')}    val ${f.name}: ${f.kt},`).join('\n');
-  const writes = fields.flatMap((f) => writeStmts(f.type, f.name, name + pascal(f.name))).map((l) => `        ${l}`).join('\n');
-  const reads = fields.map((f) => `            ${f.name} = ${readExpr(f.type, name + pascal(f.name))},`).join('\n');
-  return `${kdoc(docs)}data class ${name}(
+  const fields = struct.fields.map((f) => ({
+    name: ident(f.name),
+    type: f.type,
+    omitted: isOmitted(f) ? valueLiteral(f.defaultValue, f.type) : null,
+    kt: isOmitted(f) ? null : ktType(f.type, name + pascal(f.name)),
+    docs: f.docs,
+  }));
+  const kept = fields.filter((f) => f.omitted === null);
+  const props = kept.map((f) => `${kdoc(f.docs, '    ')}    val ${f.name}: ${f.kt},`).join('\n');
+  const writes = fields
+    .flatMap((f) => writeStmts(f.type, f.omitted ?? f.name, name + pascal(f.name)))
+    .map((l) => `        ${l}`).join('\n');
+  // Fields are read in order into locals; an omitted field (discriminator) must match its constant.
+  const reads = fields.map((f, i) => f.omitted !== null
+    ? `            require(${readExpr(f.type, name + pascal(f.name))}.contentEquals(${f.omitted})) { "${name}: wrong ${f.name.replace(/`/g, '')}" }`
+    : `            val f${i} = ${readExpr(f.type, name + pascal(f.name))}`).join('\n');
+  const args = fields.map((f, i) => (f.omitted !== null ? null : `${f.name} = f${i}`)).filter(Boolean).join(', ');
+  const constants = fields.filter((f) => f.omitted !== null)
+    .map((f) => `        val ${screaming(f.name.replace(/`/g, ''))}: ByteArray get() = ${f.omitted}\n\n`).join('');
+  return `${kdoc(docs)}${kept.length ? 'data ' : ''}class ${name}(
 ${props}
 ) {
     internal fun write(w: DataWriter) {
@@ -208,9 +248,51 @@ ${writes}
     fun encode(): ByteArray = DataWriter().also { write(it) }.toByteArray()
 
     companion object {
-${extra}        internal fun read(r: DataReader): ${name} = ${name}(
+${extra}${constants}        internal fun read(r: DataReader): ${name} {
 ${reads}
-        )
+            return ${name}(${args})
+        }
+
+        fun decode(data: ByteArray): ${name} = read(DataReader(data))
+    }
+}
+`;
+}
+
+/** An enum whose variants carry data: a sealed class, tagged by the variant index. */
+function sealedEnum(name, enumType, docs) {
+  const size = enumSize(enumType);
+  const tagW = (i) => `w.${size.format}(${num(size).lit(i)}${size.format.match(/^[ui]8$/) ? '' : ', bigEndian = ' + be(size)})`;
+  const variants = enumType.variants.map((v, i) => {
+    const vName = pascal(v.name);
+    if (v.kind === 'enumEmptyVariantTypeNode') {
+      return { decl: `${kdoc(v.docs, '    ')}    data object ${vName} : ${name}()`, write: `is ${vName} -> ${tagW(i)}`, read: `${i} -> ${vName}` };
+    }
+    if (v.kind !== 'enumStructVariantTypeNode') { unsupported.push(`enum variant ${v.kind} (${name}.${v.name})`); return null; }
+    const fields = v.struct.fields.map((f) => ({ name: ident(f.name), type: f.type, kt: ktType(f.type, name + vName + pascal(f.name)), docs: f.docs }));
+    const writes = [tagW(i), ...fields.flatMap((f) => writeStmts(f.type, f.name, name + vName + pascal(f.name)))];
+    return {
+      decl: `${kdoc(v.docs, '    ')}    data class ${vName}(${fields.map((f) => `val ${f.name}: ${f.kt}`).join(', ')}) : ${name}()`,
+      write: `is ${vName} -> { ${writes.join('; ')} }`,
+      read: `${i} -> ${vName}(${fields.map((f) => `${f.name} = ${readExpr(f.type, name + vName + pascal(f.name))}`).join(', ')})`,
+    };
+  }).filter(Boolean);
+  return `${kdoc(docs)}sealed class ${name} {
+${variants.map((v) => v.decl).join('\n')}
+
+    internal fun write(w: DataWriter) {
+        when (this) {
+${variants.map((v) => `            ${v.write}`).join('\n')}
+        }
+    }
+
+    fun encode(): ByteArray = DataWriter().also { write(it) }.toByteArray()
+
+    companion object {
+        internal fun read(r: DataReader): ${name} = when (val tag = r.${size.format}().toInt()) {
+${variants.map((v) => `            ${v.read}`).join('\n')}
+            else -> error("${name}: unknown variant $tag")
+        }
 
         fun decode(data: ByteArray): ${name} = read(DataReader(data))
     }
@@ -228,8 +310,8 @@ ${imports.map((i) => `import ${i}`).join('\n')}
 `;
 
 // Program object
-files.set(join(pkgDir(''), `${programName}Program.kt`), `${header('', ['com.solana.publickey.SolanaPublicKey'])}
-${kdoc(program.docs)}object ${programName}Program {
+files.set(join(pkgDir(''), `${programObject}.kt`), `${header('', ['com.solana.publickey.SolanaPublicKey'])}
+${kdoc(program.docs)}object ${programObject} {
     val PROGRAM_ID: SolanaPublicKey = SolanaPublicKey.from("${program.publicKey}")
 }
 `);
@@ -297,14 +379,18 @@ internal class DataReader(private val data: ByteArray, private var offset: Int =
     fun f32(bigEndian: Boolean = false): Float = Float.fromBits(int(4, bigEndian).toInt())
     fun f64(bigEndian: Boolean = false): Double = Double.fromBits(int(8, bigEndian))
 }
+
+/** Constant bytes from the IDL (Anchor discriminators), written in hex. */
+internal fun hex(s: String): ByteArray = ByteArray(s.length / 2) { s.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 `);
 
 // Defined types
 for (const t of program.definedTypes) {
   const name = pascal(t.name);
   let body;
-  if (t.type.kind === 'enumTypeNode') {
-    if (t.type.variants.some((v) => v.kind !== 'enumEmptyVariantTypeNode')) unsupported.push(`enum with data: ${t.name}`);
+  if (t.type.kind === 'enumTypeNode' && hasData(t.type)) {
+    body = sealedEnum(name, t.type, t.docs);
+  } else if (t.type.kind === 'enumTypeNode') {
     body = `${kdoc(t.docs)}enum class ${name} {\n${t.type.variants.map((v) => `${kdoc(v.docs, '    ')}    ${screaming(v.name)},`).join('\n')}\n}\n`;
   } else if (t.type.kind === 'structTypeNode') {
     body = structClass(name, t.type, t.docs);
@@ -312,7 +398,7 @@ for (const t of program.definedTypes) {
     unsupported.push(`defined type ${t.type.kind}`);
     continue;
   }
-  files.set(join(pkgDir('types'), `${name}.kt`), `${header('types', ['com.solana.publickey.SolanaPublicKey', `${basePackage}.DataReader`, `${basePackage}.DataWriter`])}\n${body}`);
+  files.set(join(pkgDir('types'), `${name}.kt`), `${header('types', ['com.solana.publickey.SolanaPublicKey', `${basePackage}.DataReader`, `${basePackage}.DataWriter`, `${basePackage}.hex`])}\n${body}`);
 }
 
 // Accounts
@@ -320,7 +406,7 @@ for (const a of program.accounts) {
   const name = pascal(a.name);
   const extra = a.size != null ? `        const val SIZE: Int = ${a.size}\n\n` : '';
   const body = structClass(name, a.data, a.docs, extra);
-  files.set(join(pkgDir('accounts'), `${name}.kt`), `${header('accounts', ['com.solana.publickey.SolanaPublicKey', `${basePackage}.DataReader`, `${basePackage}.DataWriter`, `${basePackage}.types.*`])}\n${body}`);
+  files.set(join(pkgDir('accounts'), `${name}.kt`), `${header('accounts', ['com.solana.publickey.SolanaPublicKey', `${basePackage}.DataReader`, `${basePackage}.DataWriter`, `${basePackage}.hex`, `${basePackage}.types.*`])}\n${body}`);
 }
 
 // Errors
@@ -371,8 +457,10 @@ for (const ix of program.instructions) {
   }
 
   const dataStmts = [];
+  // An argument may share its name with an account (Squads: configAuthority); the argument gets "Arg".
+  const accountNames = new Set(ix.accounts.map((a) => a.name));
   for (const arg of ix.arguments) {
-    const n = ident(arg.name);
+    const n = ident(accountNames.has(arg.name) ? `${arg.name}Arg` : arg.name);
     const hint = pascal(ix.name) + pascal(arg.name);
     if (arg.defaultValueStrategy === 'omitted' && arg.defaultValue) {
       dataStmts.push(...writeStmts(arg.type, valueLiteral(arg.defaultValue, arg.type), hint));
@@ -390,7 +478,7 @@ for (const ix of program.instructions) {
     params.push({ name: n, kt: 'List<SolanaPublicKey>', def: r.isOptional ? 'emptyList()' : null, docs: r.docs });
     metas.push(`${n}.forEach { add(AccountMeta(it, isSigner = ${r.isSigner === true}, isWritable = ${r.isWritable === true})) }`);
   }
-  params.push({ name: 'programId', kt: 'SolanaPublicKey', def: `${programName}Program.PROGRAM_ID`, docs: [] });
+  params.push({ name: 'programId', kt: 'SolanaPublicKey', def: `${programObject}.PROGRAM_ID`, docs: [] });
 
   // Required parameters first so positional calls stay natural.
   const ordered = [...params.filter((p) => p.def === null), ...params.filter((p) => p.def !== null)];
@@ -413,16 +501,17 @@ ${metas.length ? `        buildList {\n${metas.map((m) => `            ${m}`).jo
     'com.solana.publickey.SolanaPublicKey',
     'com.solana.transaction.AccountMeta',
     'com.solana.transaction.TransactionInstruction',
-    `${basePackage}.${programName}Program`,
+    `${basePackage}.${programObject}`,
     `${basePackage}.DataWriter`,
     `${basePackage}.DataReader`,
+    `${basePackage}.hex`,
     `${basePackage}.types.*`,
   ])}\n${body}`);
 }
 
 // Inline structs discovered while rendering instructions (e.g. batch items)
 for (const { name, struct } of inlineStructs) {
-  files.set(join(pkgDir('types'), `${name}.kt`), `${header('types', ['com.solana.publickey.SolanaPublicKey', `${basePackage}.DataReader`, `${basePackage}.DataWriter`])}\n${structClass(name, struct, [])}`);
+  files.set(join(pkgDir('types'), `${name}.kt`), `${header('types', ['com.solana.publickey.SolanaPublicKey', `${basePackage}.DataReader`, `${basePackage}.DataWriter`, `${basePackage}.hex`])}\n${structClass(name, struct, [])}`);
 }
 
 if (unsupported.length) {

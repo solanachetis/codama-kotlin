@@ -4,6 +4,7 @@ package codama.generated.token.accounts
 import com.solana.publickey.SolanaPublicKey
 import codama.generated.token.DataReader
 import codama.generated.token.DataWriter
+import codama.generated.token.hex
 import codama.generated.token.types.*
 
 data class Token(
@@ -63,16 +64,17 @@ data class Token(
     companion object {
         const val SIZE: Int = 165
 
-        internal fun read(r: DataReader): Token = Token(
-            mint = SolanaPublicKey(r.bytes(32)),
-            owner = SolanaPublicKey(r.bytes(32)),
-            amount = r.u64(bigEndian = false),
-            delegate = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32))),
-            state = AccountState.entries[r.u8().toInt()],
-            isNative = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(8); null } else r.u64(bigEndian = false)),
-            delegatedAmount = r.u64(bigEndian = false),
-            closeAuthority = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32))),
-        )
+        internal fun read(r: DataReader): Token {
+            val f0 = SolanaPublicKey(r.bytes(32))
+            val f1 = SolanaPublicKey(r.bytes(32))
+            val f2 = r.u64(bigEndian = false)
+            val f3 = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32)))
+            val f4 = AccountState.entries[r.u8().toInt()]
+            val f5 = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(8); null } else r.u64(bigEndian = false))
+            val f6 = r.u64(bigEndian = false)
+            val f7 = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32)))
+            return Token(mint = f0, owner = f1, amount = f2, delegate = f3, state = f4, isNative = f5, delegatedAmount = f6, closeAuthority = f7)
+        }
 
         fun decode(data: ByteArray): Token = read(DataReader(data))
     }

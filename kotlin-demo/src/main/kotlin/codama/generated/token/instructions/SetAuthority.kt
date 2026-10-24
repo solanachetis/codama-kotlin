@@ -7,6 +7,7 @@ import com.solana.transaction.TransactionInstruction
 import codama.generated.token.TokenProgram
 import codama.generated.token.DataWriter
 import codama.generated.token.DataReader
+import codama.generated.token.hex
 import codama.generated.token.types.*
 
 /**

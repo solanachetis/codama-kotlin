@@ -4,6 +4,7 @@ package codama.generated.token.accounts
 import com.solana.publickey.SolanaPublicKey
 import codama.generated.token.DataReader
 import codama.generated.token.DataWriter
+import codama.generated.token.hex
 import codama.generated.token.types.*
 
 data class Mint(
@@ -45,13 +46,14 @@ data class Mint(
     companion object {
         const val SIZE: Int = 82
 
-        internal fun read(r: DataReader): Mint = Mint(
-            mintAuthority = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32))),
-            supply = r.u64(bigEndian = false),
-            decimals = r.u8(),
-            isInitialized = (r.u8().toLong() != 0L),
-            freezeAuthority = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32))),
-        )
+        internal fun read(r: DataReader): Mint {
+            val f0 = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32)))
+            val f1 = r.u64(bigEndian = false)
+            val f2 = r.u8()
+            val f3 = (r.u8().toLong() != 0L)
+            val f4 = (if (r.u32(bigEndian = false).toLong() == 0L) { r.skip(32); null } else SolanaPublicKey(r.bytes(32)))
+            return Mint(mintAuthority = f0, supply = f1, decimals = f2, isInitialized = f3, freezeAuthority = f4)
+        }
 
         fun decode(data: ByteArray): Mint = read(DataReader(data))
     }

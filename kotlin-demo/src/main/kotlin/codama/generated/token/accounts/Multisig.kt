@@ -4,6 +4,7 @@ package codama.generated.token.accounts
 import com.solana.publickey.SolanaPublicKey
 import codama.generated.token.DataReader
 import codama.generated.token.DataWriter
+import codama.generated.token.hex
 import codama.generated.token.types.*
 
 data class Multisig(
@@ -37,12 +38,13 @@ data class Multisig(
     companion object {
         const val SIZE: Int = 355
 
-        internal fun read(r: DataReader): Multisig = Multisig(
-            m = r.u8(),
-            n = r.u8(),
-            isInitialized = (r.u8().toLong() != 0L),
-            signers = List(11) { SolanaPublicKey(r.bytes(32)) },
-        )
+        internal fun read(r: DataReader): Multisig {
+            val f0 = r.u8()
+            val f1 = r.u8()
+            val f2 = (r.u8().toLong() != 0L)
+            val f3 = List(11) { SolanaPublicKey(r.bytes(32)) }
+            return Multisig(m = f0, n = f1, isInitialized = f2, signers = f3)
+        }
 
         fun decode(data: ByteArray): Multisig = read(DataReader(data))
     }

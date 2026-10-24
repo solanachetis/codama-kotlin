@@ -4,6 +4,7 @@ package codama.generated.token.types
 import com.solana.publickey.SolanaPublicKey
 import codama.generated.token.DataReader
 import codama.generated.token.DataWriter
+import codama.generated.token.hex
 
 enum class AccountState {
     UNINITIALIZED,

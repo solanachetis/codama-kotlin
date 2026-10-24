@@ -3,8 +3,34 @@
 Generates a typed **Kotlin** client for any Solana program from its **Codama IDL**, on top of
 `com.solanamobile:web3-solana` (the library the Solana Mobile docs use for native Android apps).
 
-Status: **48-hour prototype**. One program tested end to end: **SPL Token** (official Codama IDL,
-`solana-program/token`, commit `f5285693a9` of 2026-08-12).
+Status: **prototype**. Two programs tested end to end:
+
+- **SPL Token** (official Codama IDL, `solana-program/token`, commit `f5285693a9` of 2026-08-12): byte-for-byte vs the official JS client.
+- **Squads v4 multisig** (official legacy Anchor IDL from `Squads-Protocol/v4`, commit `af94153ff7` of 2026-08-20,
+  converted with `@codama/nodes-from-anchor`): 36 instructions, 9 accounts, 45 errors generated. On 2026-10-22 devnet
+  simulated a whole vault life built only from this Kotlin code, in one transaction: `MultisigCreateV2` → fund the vault →
+  `VaultTransactionCreate` → `ProposalCreate` → `ProposalApprove` → `VaultTransactionExecute` (recipient got 0.005 SOL from the vault).
+  `kotlin-demo/src/test/kotlin/SquadsDevnetTest.kt`, run with `SQUADS_DEVNET=1`.
+
+## Squads v4 in Kotlin
+
+```bash
+npm run generate:squads   # Anchor IDL -> Codama JSON -> kotlin-demo/src/main/kotlin/codama/generated/squads
+```
+
+- Generated: every instruction (`multisigCreateV2Instruction`, `proposalApproveInstruction`…), account decoders
+  (`Multisig.decode`, `ProgramConfig.decode`, with discriminator check), `ConfigAction` / `ProposalStatus` as sealed classes.
+- Hand-written (`kotlin-demo/src/main/kotlin/squads/Squads.kt`), because the legacy IDL can't describe them:
+  `SquadsPda` (program config, multisig, vault, transaction, proposal, spending limit) and `VaultMessage`
+  (Squads' compact `TransactionMessage` format + the accounts `vaultTransactionExecute` needs).
+- Found on the way: for this 6-instruction transaction, `web3-solana` 0.3.1 `Message.Builder` wrote the header
+  `[2,2,4]` instead of `[2,1,3]` and devnet refused it ("failed to sanitize accounts offsets"). The test compiles
+  the message by hand instead. Reduced to a minimal case: an account writable in one instruction and read-only in
+  another is counted as read-only in the header. Wrong in 0.2.5 and 0.3.1, fixed on `main` (solana-mobile/web3-core#42)
+  but only shipped in 0.4.0-beta1. Reported as solana-mobile/web3-core#47.
+
+Generator additions for Squads: Anchor 8-byte discriminators (`fixedSizeTypeNode` + `bytesValueNode`, checked on decode,
+exposed as `DISCRIMINATOR`), enums with data → sealed classes, argument/account name clashes (`configAuthorityArg`).
 
 ## What it does today
 
@@ -34,7 +60,9 @@ npm run vectors    # reference vectors from the official JS client
 cd kotlin-demo && ./gradlew test
 ```
 
-Result on 2026-10-21: `BUILD SUCCESSFUL`, 3 tests passed (32 + 3 + 1 checks).
+Result on 2026-10-24: `BUILD SUCCESSFUL`. Token: 3 tests passed (32 + 3 + 1 checks). Squads: the offline test passed;
+the devnet simulation is skipped unless `SQUADS_DEVNET=1` (last run green on 2026-10-22).
+Regenerating both clients from the IDLs gives exactly the committed code.
 
 ## Using the output on Android
 
@@ -54,8 +82,9 @@ val ix = transferCheckedInstruction(
 
 - **It is a standalone Node script reading the Codama JSON, not yet a `@codama/renderers-kotlin`
   visitor package.** A real renderer would plug into `codama.accept(renderVisitor(...))` like the JS/Rust/Dart ones.
-- **Tested on one program only.** Not covered yet: PDAs and PDA-derived account defaults, Anchor
-  8-byte discriminators and `accountDiscriminator`, enums with data, u128/i128, maps/tuples/sets,
+- **Tested on two programs** (SPL Token byte for byte, Squads v4 on devnet). Anchor 8-byte discriminators and
+  enums with data are handled since the Squads work. Not covered yet: PDAs and PDA-derived account defaults
+  (Squads PDAs are hand-written in `squads/Squads.kt`), u128/i128, maps/tuples/sets,
   instruction parsing (bytes to typed instruction), Token-2022 extensions.
   The generator **stops with an error** on any node it does not support instead of producing wrong code.
 - No Gradle plugin yet: you run the script, then commit the output.
@@ -67,12 +96,10 @@ val ix = transferCheckedInstruction(
 
 ```
 idl/token.json                 official Codama IDL (input)
-renderer/render.mjs            the generator (~440 lines)
+idl/squads/                    official Squads v4 Anchor IDL (input)
+idl/squads.json                the same, converted to Codama JSON
+renderer/render.mjs            the generator (~530 lines)
+scripts/anchor-to-codama.mjs   Anchor IDL -> Codama JSON (@codama/nodes-from-anchor)
 scripts/vectors.mjs            reference vectors from the official JS client
-kotlin-demo/                   Gradle project: generated code + byte-for-byte tests
+kotlin-demo/                   Gradle project: generated code, Squads helpers, byte-for-byte and devnet tests
 ```
-
-## License
-
-MIT for this repository's code. `idl/token.json` comes from
-[solana-program/token](https://github.com/solana-program/token) (Apache-2.0).

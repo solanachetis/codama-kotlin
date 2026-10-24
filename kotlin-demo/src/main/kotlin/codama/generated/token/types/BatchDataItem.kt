@@ -4,6 +4,7 @@ package codama.generated.token.types
 import com.solana.publickey.SolanaPublicKey
 import codama.generated.token.DataReader
 import codama.generated.token.DataWriter
+import codama.generated.token.hex
 
 data class BatchDataItem(
     val numberOfAccounts: UByte,
@@ -19,10 +20,11 @@ data class BatchDataItem(
     fun encode(): ByteArray = DataWriter().also { write(it) }.toByteArray()
 
     companion object {
-        internal fun read(r: DataReader): BatchDataItem = BatchDataItem(
-            numberOfAccounts = r.u8(),
-            instructionData = r.bytes(r.u8().toInt()),
-        )
+        internal fun read(r: DataReader): BatchDataItem {
+            val f0 = r.u8()
+            val f1 = r.bytes(r.u8().toInt())
+            return BatchDataItem(numberOfAccounts = f0, instructionData = f1)
+        }
 
         fun decode(data: ByteArray): BatchDataItem = read(DataReader(data))
     }
