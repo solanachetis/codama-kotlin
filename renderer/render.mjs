@@ -425,6 +425,71 @@ ${entries}
 `);
 }
 
+// PDAs: one `find…Pda` per pdaNode, of this program and of the additional programs it ships with
+// (SPL Token ships the associated token program). Same seed bytes as Codama's JS `find…Pda`.
+function seedBytes(seed, params) {
+  if (seed.kind === 'constantPdaSeedNode') {
+    const { type, value } = seed;
+    if (value.kind === 'programIdValueNode') return 'programId.bytes';
+    if (value.kind === 'stringValueNode' && type.kind === 'stringTypeNode' && (type.encoding || 'utf8') === 'utf8') {
+      return `${JSON.stringify(value.string)}.encodeToByteArray()`;
+    }
+    if (value.kind === 'bytesValueNode' && value.encoding === 'utf8') return `${JSON.stringify(value.data)}.encodeToByteArray()`;
+    if (value.kind === 'bytesValueNode' && value.encoding === 'base16') return `hex("${value.data}")`;
+    if (value.kind === 'publicKeyValueNode') return `SolanaPublicKey.from("${value.publicKey}").bytes`;
+    if (value.kind === 'numberValueNode' && type.kind === 'numberTypeNode') {
+      return `DataWriter().also { w -> ${writeStmts(type, num(type).lit(value.number)).join('; ')} }.toByteArray()`;
+    }
+    unsupported.push(`constant PDA seed ${type.kind} = ${value.kind}`);
+    return 'TODO()';
+  }
+  if (seed.kind !== 'variablePdaSeedNode') { unsupported.push(`PDA seed ${seed.kind}`); return 'TODO()'; }
+  const n = ident(seed.name);
+  const { type } = seed;
+  if (type.kind === 'publicKeyTypeNode') { params.push({ name: n, kt: 'SolanaPublicKey', docs: seed.docs }); return `${n}.bytes`; }
+  if (type.kind === 'stringTypeNode' && (type.encoding || 'utf8') === 'utf8') {
+    // A string seed is its raw UTF-8 bytes, no length prefix.
+    params.push({ name: n, kt: 'String', docs: seed.docs });
+    return `${n}.encodeToByteArray()`;
+  }
+  if (type.kind === 'bytesTypeNode') { params.push({ name: n, kt: 'ByteArray', docs: seed.docs }); return n; }
+  // Anything else (numbers, structs…) is written with its own encoding.
+  params.push({ name: n, kt: ktType(type, pascal(seed.name)), docs: seed.docs });
+  return `DataWriter().also { w -> ${writeStmts(type, n, pascal(seed.name)).join('; ')} }.toByteArray()`;
+}
+
+const pdaPrograms = [program, ...(root.additionalPrograms || [])];
+for (const p of pdaPrograms) {
+  const defaultProgramId = p === program ? `${programObject}.PROGRAM_ID` : `SolanaPublicKey.from("${p.publicKey}")`;
+  for (const pda of p.pdas || []) {
+    const params = [];
+    const seeds = pda.seeds.map((s) => seedBytes(s, params));
+    const programId = pda.programId ? `SolanaPublicKey.from("${pda.programId}")` : defaultProgramId;
+    const paramDocs = params.filter((q) => q.docs && q.docs.length).map((q) => `@param ${q.name.replace(/`/g, '')} ${q.docs.join(' ')}`);
+    const docs = [...(pda.docs || []), ...(p === program ? [] : [`A PDA of the ${p.name} program.`]),
+      ...(paramDocs.length ? ['', ...paramDocs] : []), '@return the address and its bump.'];
+    const name = pascal(pda.name);
+    const code = seeds.join(' ') + params.map((q) => q.kt).join(' ') + programId;
+    files.set(join(pkgDir('pdas'), `${name}Pda.kt`), `${header('pdas', [
+      'com.solana.publickey.ProgramDerivedAddress',
+      'com.solana.publickey.SolanaPublicKey',
+      ...(code.includes(programObject) ? [`${basePackage}.${programObject}`] : []),
+      ...(code.includes('DataWriter') ? [`${basePackage}.DataWriter`] : []),
+      ...(code.includes('hex(') ? [`${basePackage}.hex`] : []),
+      `${basePackage}.types.*`,
+    ])}
+${kdoc(docs)}suspend fun find${name}Pda(
+${[...params.map((q) => `    ${q.name}: ${q.kt},`), `    programId: SolanaPublicKey = ${programId},`].join('\n')}
+): ProgramDerivedAddress = ProgramDerivedAddress.find(
+    listOf(
+${seeds.map((s) => `        ${s},`).join('\n')}
+    ),
+    programId,
+).getOrThrow()
+`);
+  }
+}
+
 // Instructions
 for (const ix of program.instructions) {
   const fnName = `${camel(ix.name)}Instruction`;

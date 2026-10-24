@@ -666,5 +666,113 @@
       "id": "multisig",
       "data": "0203010a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     }
+  ],
+  "pdas": [
+    {
+      "id": "ataToken",
+      "seeds": {
+        "owner": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+        "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "mint": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8"
+      },
+      "address": "8Pn2Zv9YKduT1C72iQR28i4L9R5acUCJ61DFrdGwf1Sf",
+      "bump": 254
+    },
+    {
+      "id": "ataToken2022",
+      "seeds": {
+        "owner": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+        "tokenProgram": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+        "mint": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8"
+      },
+      "address": "6ZcHH4yqYgPwuS8Hg2fUjGvK1UUhTdTckWVP3raACw4E",
+      "bump": 255
+    },
+    {
+      "id": "ataUsdc",
+      "seeds": {
+        "owner": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN",
+        "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      },
+      "address": "5NM2PTxoZG8edxvBeAPEHyvuTqXAkoBwfFNkfBjzrBQr",
+      "bump": 254
+    },
+    {
+      "id": "programConfig",
+      "pda": "programConfig",
+      "seeds": {},
+      "address": "BSTq9w3kZwNwpBXJEvTZz2G9ZTNyKBvoSeXMvwb4cNZr",
+      "bump": 255
+    },
+    {
+      "id": "multisig",
+      "pda": "multisig",
+      "seeds": {
+        "createKey": "2RJD1KnDRGEkvuFfAGrJ7PD28LRE9LRDjZznDywagzmr"
+      },
+      "address": "2U3SbU5X5Kciv6nVfCeh1QHMz13Z1ysWD2mEU7qfsJ17",
+      "bump": 255
+    },
+    {
+      "id": "vault0",
+      "pda": "vault",
+      "seeds": {
+        "multisig": "2MNus2KCpxwXnp19iyXNpWSFtBD2UGjQBAL8AbtywfT9",
+        "index": 0
+      },
+      "address": "GNZCvaHW8PL16gteX2FkfEQihENY2V2hVLppd4gA6kxT",
+      "bump": 255
+    },
+    {
+      "id": "vault255",
+      "pda": "vault",
+      "seeds": {
+        "multisig": "2MNus2KCpxwXnp19iyXNpWSFtBD2UGjQBAL8AbtywfT9",
+        "index": 255
+      },
+      "address": "DuDu2crpgXvcKFzamBLQDHEcHcWEzEhiekGvTCFLtrQp",
+      "bump": 254
+    },
+    {
+      "id": "transaction1",
+      "pda": "transaction",
+      "seeds": {
+        "multisig": "2MNus2KCpxwXnp19iyXNpWSFtBD2UGjQBAL8AbtywfT9",
+        "index": "1"
+      },
+      "address": "6pZ5sn9GT21kmBFcCS8vAuWewGnJpCCwtT8i2VQgrHi3",
+      "bump": 255
+    },
+    {
+      "id": "transactionBig",
+      "pda": "transaction",
+      "seeds": {
+        "multisig": "2MNus2KCpxwXnp19iyXNpWSFtBD2UGjQBAL8AbtywfT9",
+        "index": "1099511627776"
+      },
+      "address": "AvMdLagRVFVAvsZjerE2QZoYm9yJEFaNVABcbTVJUDvX",
+      "bump": 251
+    },
+    {
+      "id": "proposal7",
+      "pda": "proposal",
+      "seeds": {
+        "multisig": "2MNus2KCpxwXnp19iyXNpWSFtBD2UGjQBAL8AbtywfT9",
+        "transactionIndex": "7"
+      },
+      "address": "7aT1UEs43yjA62VeNiqy3BL2KTg7bLVuJhzLhBSSTh6R",
+      "bump": 254
+    },
+    {
+      "id": "spendingLimit",
+      "pda": "spendingLimit",
+      "seeds": {
+        "multisig": "2MNus2KCpxwXnp19iyXNpWSFtBD2UGjQBAL8AbtywfT9",
+        "createKey": "2RJD1KnDRGEkvuFfAGrJ7PD28LRE9LRDjZznDywagzmr"
+      },
+      "address": "Hmecd9HN5MG2ZaGBfGSedGM8tKxf4R7StjPSGV4zGaT",
+      "bump": 255
+    }
   ]
 }

@@ -14,7 +14,8 @@ import com.solana.mobilewalletadapter.clientlib.TransactionResult
 import com.solana.publickey.SolanaPublicKey
 import kotlinx.coroutines.delay
 import squads.Permission
-import squads.SquadsPda
+import codama.generated.squads.pdas.findMultisigPda
+import codama.generated.squads.pdas.findProgramConfigPda
 
 /** The wallet and the app must agree on the network, or the wallet refuses to sign ("network mismatch"). */
 enum class Network(val label: String, val rpcUrl: String) {
@@ -51,14 +52,14 @@ class SquadsDemo(val network: Network) {
 
     /** Squads' global config, decoded with the generated [ProgramConfig] decoder. */
     suspend fun programConfig(): Pair<SolanaPublicKey, ProgramConfig> {
-        val address = SquadsPda.programConfig()
+        val address = findProgramConfigPda()
         val data = rpc.accountData(address) ?: error("No Squads ProgramConfig on ${network.label}")
         return address to ProgramConfig.decode(data)
     }
 
     /** The multisig whose create key is [owner], decoded with the generated [Multisig] decoder, or null. */
     suspend fun multisigOf(owner: SolanaPublicKey): Pair<SolanaPublicKey, Multisig?> {
-        val address = SquadsPda.multisig(owner)
+        val address = findMultisigPda(owner)
         return address to rpc.accountData(address)?.let { Multisig.decode(it) }
     }
 
@@ -76,7 +77,7 @@ class SquadsDemo(val network: Network) {
                 val create = multisigCreateV2Instruction(
                     programConfig = configAddress,
                     treasury = config.treasury,
-                    multisig = SquadsPda.multisig(owner),
+                    multisig = findMultisigPda(owner),
                     createKey = owner,
                     creator = owner,
                     configAuthority = null,

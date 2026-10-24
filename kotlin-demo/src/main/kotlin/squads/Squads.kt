@@ -1,10 +1,9 @@
 // Hand-written companion to the generated Squads v4 client: what the IDL can't describe.
+// The addresses (PDAs) are generated: their seeds are added to the IDL by idl/squads/pdas.mjs.
 package squads
 
-import com.solana.publickey.ProgramDerivedAddress
 import com.solana.publickey.SolanaPublicKey
 import com.solana.transaction.TransactionInstruction
-import codama.generated.squads.SquadsMultisigProgram
 
 /** Member permissions (bit mask), as in the Squads SDK. */
 object Permission {
@@ -12,37 +11,6 @@ object Permission {
     const val VOTE: UByte = 2u
     const val EXECUTE: UByte = 4u
     const val ALL: UByte = 7u
-}
-
-/**
- * Squads v4 addresses. The legacy Anchor IDL has no seeds, so they are written here, same seeds as
- * the official SDK (`pda.ts`): every one starts with "multisig".
- */
-object SquadsPda {
-    private val PREFIX = "multisig".encodeToByteArray()
-    private val programId get() = SquadsMultisigProgram.PROGRAM_ID
-
-    private suspend fun find(vararg seeds: ByteArray): SolanaPublicKey =
-        ProgramDerivedAddress.find(seeds.toList(), programId).getOrThrow()
-
-    suspend fun programConfig() = find(PREFIX, "program_config".encodeToByteArray())
-
-    suspend fun multisig(createKey: SolanaPublicKey) = find(PREFIX, "multisig".encodeToByteArray(), createKey.bytes)
-
-    /** The vault holds the funds; nobody has its private key, only the program can move them. */
-    suspend fun vault(multisig: SolanaPublicKey, index: UByte = 0u) =
-        find(PREFIX, multisig.bytes, "vault".encodeToByteArray(), byteArrayOf(index.toByte()))
-
-    suspend fun transaction(multisig: SolanaPublicKey, index: ULong) =
-        find(PREFIX, multisig.bytes, "transaction".encodeToByteArray(), u64(index))
-
-    suspend fun proposal(multisig: SolanaPublicKey, index: ULong) =
-        find(PREFIX, multisig.bytes, "transaction".encodeToByteArray(), u64(index), "proposal".encodeToByteArray())
-
-    suspend fun spendingLimit(multisig: SolanaPublicKey, createKey: SolanaPublicKey) =
-        find(PREFIX, multisig.bytes, "spending_limit".encodeToByteArray(), createKey.bytes)
-
-    private fun u64(v: ULong) = ByteArray(8) { (v shr (8 * it)).toByte() }
 }
 
 /**

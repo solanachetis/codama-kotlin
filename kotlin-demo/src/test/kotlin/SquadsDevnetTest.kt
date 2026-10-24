@@ -26,7 +26,11 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import squads.Permission
-import squads.SquadsPda
+import codama.generated.squads.pdas.findMultisigPda
+import codama.generated.squads.pdas.findProgramConfigPda
+import codama.generated.squads.pdas.findProposalPda
+import codama.generated.squads.pdas.findTransactionPda
+import codama.generated.squads.pdas.findVaultPda
 import squads.VaultMessage
 import java.net.URI
 import java.net.http.HttpClient
@@ -65,7 +69,7 @@ class SquadsDevnetTest {
     fun fullVaultLifecycleOnDevnet() = runBlocking {
         assumeTrue(System.getenv("SQUADS_DEVNET") == "1", "set SQUADS_DEVNET=1 to run against devnet")
 
-        val configAddress = SquadsPda.programConfig()
+        val configAddress = findProgramConfigPda()
         val config = ProgramConfig.decode(accountData(configAddress) ?: error("no ProgramConfig on devnet"))
         println("ProgramConfig ${configAddress.base58()}: treasury=${config.treasury.base58()} fee=${config.multisigCreationFee}")
 
@@ -73,12 +77,12 @@ class SquadsDevnetTest {
         println("creator ${creator.base58()} balance=${balance(creator)}")
 
         val createKey = randomKey()
-        val multisig = SquadsPda.multisig(createKey)
-        val vault = SquadsPda.vault(multisig)
+        val multisig = findMultisigPda(createKey)
+        val vault = findVaultPda(multisig, 0u)
         val recipient = randomKey()
         val txIndex = 1uL
-        val transaction = SquadsPda.transaction(multisig, txIndex)
-        val proposal = SquadsPda.proposal(multisig, txIndex)
+        val transaction = findTransactionPda(multisig, txIndex)
+        val proposal = findProposalPda(multisig, txIndex)
 
         val create = multisigCreateV2Instruction(
             programConfig = configAddress,

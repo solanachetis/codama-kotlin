@@ -5,7 +5,7 @@
   "scripts": {
     "generate": "node renderer/render.mjs idl/token.json kotlin-demo/src/main/kotlin codama.generated.token",
     "vectors": "node scripts/vectors.mjs kotlin-demo/src/test/resources/vectors.json",
-    "generate:squads": "node scripts/anchor-to-codama.mjs idl/squads/squads_multisig_program.anchor.json idl/squads.json && node renderer/render.mjs idl/squads.json kotlin-demo/src/main/kotlin codama.generated.squads"
+    "generate:squads": "node scripts/anchor-to-codama.mjs idl/squads/squads_multisig_program.anchor.json idl/squads.json idl/squads/pdas.mjs && node renderer/render.mjs idl/squads.json kotlin-demo/src/main/kotlin codama.generated.squads"
   },
   "devDependencies": {
     "@codama/nodes-from-anchor": "^1.5.6",
