@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import codama.generated.squads.accounts.Multisig
 import codama.generated.squads.accounts.ProgramConfig
+import safety.Alert
+import safety.Level
 import com.solana.mobilewalletadapter.clientlib.ActivityResultSender
 import com.solana.publickey.SolanaPublicKey
 import kotlinx.coroutines.launch
@@ -71,6 +73,8 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
     }
     var busy by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<List<String>?>(null) }
+    var createAlerts by remember { mutableStateOf<List<Alert>?>(null) }
+    var scamAlerts by remember { mutableStateOf<List<Alert>?>(null) }
 
     fun run(label: String, block: suspend () -> Unit) {
         busy = true
@@ -89,6 +93,7 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
         config = demo.programConfig()
         multisig = demo.multisigOf(o)
         preview = if (multisig?.second == null) demo.preview(o) else null
+        createAlerts = if (multisig?.second == null) demo.alertsForCreate(o) else null
     }
 
     Column(
@@ -156,6 +161,10 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
                             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
                         )
                         lines.forEach { Text(it) }
+                        createAlerts?.let { alerts ->
+                            Text("Guard", style = MaterialTheme.typography.titleSmall)
+                            alerts.forEach { AlertRow(it) }
+                        }
                     }
                 }
             }
@@ -181,6 +190,20 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
             }
             OutlinedButton({ run("Refreshing…") { refresh(o); status = "Up to date." } },
                 enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Refresh") }
+            OutlinedButton({ run("Scanning…") { scamAlerts = demo.scanExampleScam(o); status = "Scanned. Nothing was signed or sent." } },
+                enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Scan an example scam (nothing is signed)") }
+            scamAlerts?.let { alerts ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("A fake \"claim your airdrop\" transaction", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "What a draining site would ask you to sign. The guard reads it with the generated parsers.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
+                        )
+                        alerts.forEach { AlertRow(it) }
+                    }
+                }
+            }
         }
         Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -188,6 +211,17 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
 
 /** Multisig account rent (~0.0034 SOL for one member) plus the fee, rounded up. */
 private const val MIN_LAMPORTS = 5_000_000L
+
+@Composable
+private fun AlertRow(alert: Alert) {
+    val (icon, color) = when (alert.level) {
+        Level.DANGER -> "🛑" to MaterialTheme.colorScheme.error
+        Level.WARNING -> "⚠️" to MaterialTheme.colorScheme.tertiary
+        Level.UNCHECKED -> "❔" to MaterialTheme.colorScheme.onSurfaceVariant
+        Level.INFO -> "ℹ️" to MaterialTheme.colorScheme.onSurface
+    }
+    Text("$icon ${alert.message}", color = color)
+}
 
 @Composable
 private fun Mono(text: String) = Text(text, fontFamily = FontFamily.Monospace, fontSize = 12.sp)

@@ -14,6 +14,15 @@ import com.solana.mobilewalletadapter.clientlib.MobileWalletAdapter
 import com.solana.mobilewalletadapter.clientlib.Solana
 import com.solana.mobilewalletadapter.clientlib.TransactionResult
 import com.solana.publickey.SolanaPublicKey
+import com.solana.transaction.AccountMeta
+import com.solana.transaction.TransactionInstruction
+import codama.generated.token.TokenProgram
+import codama.generated.token.instructions.approveInstruction
+import codama.generated.token.instructions.setAuthorityInstruction
+import codama.generated.token.pdas.findAssociatedTokenPda
+import codama.generated.token.types.AuthorityType
+import safety.Alert
+import safety.TransactionGuard
 import kotlinx.coroutines.delay
 import squads.Permission
 import codama.generated.squads.pdas.findMultisigPda
@@ -101,6 +110,38 @@ class SquadsDemo(val network: Network) {
             null -> listOf("Not a Squads instruction this app can read.")
             else -> listOf("Squads v4 · ${parsed::class.simpleName}")
         }
+    }
+
+    /** The guard's findings on the transaction the app is about to ask the wallet to sign. */
+    suspend fun alertsForCreate(owner: SolanaPublicKey): List<Alert> {
+        val (configAddress, config) = programConfig()
+        return TransactionGuard.check(listOf(createInstruction(owner, configAddress, config)), owner)
+    }
+
+    /**
+     * What a wallet-draining site asks you to sign behind a "claim your airdrop" button, aimed at [owner]:
+     * a harmless-looking 0.001 SOL fee, an unlimited spending permission, the ownership of a token account, and the
+     * wallet itself handed to a program. Built only to be scanned: it is never signed nor sent.
+     */
+    suspend fun scanExampleScam(owner: SolanaPublicKey): List<Alert> {
+        val attacker = SolanaPublicKey.from("Attack1111111111111111111111111111111111111")
+        val usdc = SolanaPublicKey.from("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+        val myUsdcAccount = findAssociatedTokenPda(owner, TokenProgram.PROGRAM_ID, usdc)
+        val system = SolanaPublicKey.from("11111111111111111111111111111111")
+        val fee = TransactionInstruction(
+            system, listOf(AccountMeta(owner, true, true), AccountMeta(attacker, false, true)),
+            byteArrayOf(2, 0, 0, 0) + ByteArray(8) { (1_000_000L shr (8 * it)).toByte() },
+        )
+        val assign = TransactionInstruction(system, listOf(AccountMeta(owner, true, true)), byteArrayOf(1, 0, 0, 0) + attacker.bytes)
+        return TransactionGuard.check(
+            listOf(
+                fee,
+                approveInstruction(myUsdcAccount, attacker, owner, amount = ULong.MAX_VALUE),
+                setAuthorityInstruction(myUsdcAccount, owner, AuthorityType.ACCOUNT_OWNER, attacker),
+                assign,
+            ),
+            owner,
+        )
     }
 
     private fun permissions(mask: UByte): String = listOfNotNull(
