@@ -17,7 +17,10 @@ import com.solana.publickey.SolanaPublicKey
 import com.solana.transaction.AccountMeta
 import com.solana.transaction.TransactionInstruction
 import codama.generated.token.TokenProgram
+import codama.generated.token.accounts.Mint
+import codama.generated.token.accounts.Token
 import codama.generated.token.instructions.approveInstruction
+import codama.generated.token.instructions.revokeInstruction
 import codama.generated.token.instructions.setAuthorityInstruction
 import codama.generated.token.pdas.findAssociatedTokenPda
 import codama.generated.token.types.AuthorityType
@@ -157,13 +160,65 @@ class SquadsDemo(val network: Network) {
      */
     suspend fun createMultisig(sender: ActivityResultSender, onStep: (String) -> Unit): String {
         val (configAddress, config) = programConfig()
+        return signSendConfirm(sender, onStep) { owner -> listOf(createInstruction(owner, configAddress, config)) }
+    }
+
+    // ---------- Wallet health: rights the wallet gave others over its token accounts ----------
+
+    /** A token account of the wallet whose tokens [delegate] may spend without asking. */
+    data class OpenPermission(
+        val account: SolanaPublicKey,
+        val tokenProgram: SolanaPublicKey,
+        val mint: SolanaPublicKey,
+        val delegate: SolanaPublicKey,
+        val delegatedAmount: ULong,
+        val decimals: Int?,
+    )
+
+    /**
+     * Every open spending permission on [owner]'s token accounts (Token and Token-2022), read with the generated
+     * `Token` and `Mint` decoders. Token-2022 accounts start with the same layout, so the first bytes are enough.
+     */
+    suspend fun openPermissions(owner: SolanaPublicKey): List<OpenPermission> =
+        listOf(TokenProgram.PROGRAM_ID, TOKEN_2022).flatMap { program ->
+            rpc.tokenAccounts(owner, program).mapNotNull { (address, data) ->
+                val account = runCatching { Token.decode(data.copyOf(Token.SIZE)) }.getOrNull() ?: return@mapNotNull null
+                val delegate = account.delegate ?: return@mapNotNull null
+                if (!account.owner.bytes.contentEquals(owner.bytes)) return@mapNotNull null
+                val decimals = rpc.accountData(account.mint)?.let { runCatching { Mint.decode(it.copyOf(Mint.SIZE)).decimals.toInt() }.getOrNull() }
+                OpenPermission(address, program, account.mint, delegate, account.delegatedAmount, decimals)
+            }
+        }
+
+    /** The generated `revokeInstruction`, for the program that holds the account. */
+    fun revokeFor(p: OpenPermission, owner: SolanaPublicKey) = revokeInstruction(source = p.account, owner = owner, programId = p.tokenProgram)
+
+    /** What the guard says about revoking [p]: read back from the instruction's bytes, like any transaction. */
+    fun revokeAlerts(p: OpenPermission, owner: SolanaPublicKey): List<Alert> = TransactionGuard.check(listOf(revokeFor(p, owner)), owner)
+
+    /** Removes the spending permission [p], signed by the wallet that owns the account. */
+    suspend fun revoke(sender: ActivityResultSender, p: OpenPermission, owner: SolanaPublicKey, onStep: (String) -> Unit): String =
+        signSendConfirm(sender, onStep) { chosen ->
+            require(chosen.bytes.contentEquals(owner.bytes)) { "Pick the wallet ${owner.base58().take(6)}… in the wallet: it owns this token account." }
+            listOf(revokeFor(p, owner))
+        }
+
+    /**
+     * Builds the transaction for the account the user picks in the wallet, has the wallet sign and send it, and
+     * waits until the network confirms it. Returns its signature.
+     */
+    private suspend fun signSendConfirm(
+        sender: ActivityResultSender,
+        onStep: (String) -> Unit,
+        build: suspend (SolanaPublicKey) -> List<com.solana.transaction.TransactionInstruction>,
+    ): String {
         var failure: Throwable? = null
         val result = wallet.transact(sender) { auth ->
             runCatching {
                 val owner = SolanaPublicKey(auth.accounts.first().publicKey)
-                val create = createInstruction(owner, configAddress, config)
+                val instructions = build(owner)
                 // Fetched inside the wallet session, right before signing: a blockhash only lives about a minute.
-                LegacyTransaction.compile(owner, rpc.latestBlockhash(), listOf(create))
+                LegacyTransaction.compile(owner, rpc.latestBlockhash(), instructions)
             }.onFailure { failure = it }.getOrNull()?.let { signAndSendTransactions(arrayOf(it)) }
         }
         failure?.let { throw it }
@@ -184,6 +239,7 @@ class SquadsDemo(val network: Network) {
     }
 
     companion object {
+        val TOKEN_2022 = SolanaPublicKey.from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
         const val IDENTITY_URI = "https://github.com/solanachetis/codama-kotlin/"
         const val IDENTITY_ICON = "favicon.ico"
         const val IDENTITY_NAME = "codama-kotlin demo"

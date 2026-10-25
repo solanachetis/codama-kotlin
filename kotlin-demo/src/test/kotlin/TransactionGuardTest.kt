@@ -92,6 +92,16 @@ class TransactionGuardTest {
         check(setAuthorityInstruction(myTokenAccount, me, AuthorityType.ACCOUNT_OWNER, me)).only(Level.INFO, "with you")
     }
 
+    /** Token-2022 keeps the SPL Token instructions: they are read the same way; its extensions are unchecked. */
+    @Test
+    fun token2022() {
+        val t22 = SolanaPublicKey.from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+        check(approveInstruction(myTokenAccount, attacker, me, amount = ULong.MAX_VALUE, programId = t22)).only(Level.DANGER, "ALL the tokens")
+        check(revokeInstruction(myTokenAccount, me, programId = t22)).only(Level.INFO, "Removes a spending permission")
+        val extension = TransactionInstruction(t22, listOf(AccountMeta(myTokenAccount, false, true)), byteArrayOf(26, 1))
+        check(extension).only(Level.UNCHECKED, "Token-2022 extension")
+    }
+
     @Test
     fun closingAndBurning() {
         check(closeAccountInstruction(myTokenAccount, attacker, me)).only(Level.WARNING, "sends its SOL to")

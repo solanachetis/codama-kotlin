@@ -34,6 +34,8 @@ data class Alert(val level: Level, val message: String, val instruction: Int)
 object TransactionGuard {
     private const val SYSTEM = "11111111111111111111111111111111"
     private const val TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+    // Token-2022 keeps the SPL Token instructions (same bytes) and adds its extensions.
+    private const val TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
     private const val SQUADS = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf"
     private const val ASSOCIATED_TOKEN = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
     private const val COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111"
@@ -51,7 +53,7 @@ object TransactionGuard {
         val out = ArrayList<Alert>()
         fun say(level: Level, message: String) { out += Alert(level, prefix + message, i) }
         when (ix.programId.base58()) {
-            TOKEN -> token(ix, me, ::say)
+            TOKEN, TOKEN_2022 -> token(ix, me, ::say)
             SQUADS -> squads(ix, me, i, ::say, out)
             SYSTEM -> system(ix, me, ::say)
             ASSOCIATED_TOKEN -> say(Level.INFO, "Creates a token account.")
@@ -69,7 +71,10 @@ object TransactionGuard {
 
     // ---------- SPL Token ----------
     private fun token(ix: TransactionInstruction, me: SolanaPublicKey, say: (Level, String) -> Unit) {
-        val t = parseTokenInstruction(ix) ?: return say(Level.WARNING, "A token instruction this app cannot read.")
+        val t = parseTokenInstruction(ix, programId = ix.programId) ?: return when (ix.programId.base58()) {
+            TOKEN_2022 -> say(Level.UNCHECKED, "A Token-2022 extension instruction this app cannot check.")
+            else -> say(Level.WARNING, "A token instruction this app cannot read.")
+        }
         when (t) {
             is Token.SetAuthority -> if (t.owner.same(me)) {
                 val to = t.newAuthority

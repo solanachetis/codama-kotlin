@@ -47,6 +47,20 @@ class SolanaRpc(private val endpoint: String) {
         return Base64.decode(value.getJSONArray("data").getString(0), Base64.DEFAULT)
     }
 
+    /** Every token account [owner] holds under [tokenProgram], with its raw data. */
+    suspend fun tokenAccounts(owner: SolanaPublicKey, tokenProgram: SolanaPublicKey): List<Pair<SolanaPublicKey, ByteArray>> {
+        val result = call(
+            "getTokenAccountsByOwner",
+            JSONArray().put(owner.base58()).put(JSONObject().put("programId", tokenProgram.base58())).put(JSONObject().put("encoding", "base64")),
+        ) as JSONObject
+        val list = result.getJSONArray("value")
+        return List(list.length()) { i ->
+            val item = list.getJSONObject(i)
+            SolanaPublicKey.from(item.getString("pubkey")) to
+                Base64.decode(item.getJSONObject("account").getJSONArray("data").getString(0), Base64.DEFAULT)
+        }
+    }
+
     suspend fun requestAirdrop(address: SolanaPublicKey, lamports: Long): String =
         call("requestAirdrop", JSONArray().put(address.base58()).put(lamports)) as String
 

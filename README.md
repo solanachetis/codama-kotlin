@@ -27,6 +27,9 @@ are, with no copy:
   (`parseSquadsMultisigProgramInstruction`), not from the values the app meant to put in, with the guard's verdict;
 - signs and sends it through **Mobile Wallet Adapter** (Seed Vault Wallet on the Seeker, or any MWA wallet);
 - reads the new multisig back with the generated `Multisig` decoder;
+- **wallet health**: reads every token account of the wallet (Token and Token-2022) with the generated `Token` and `Mint`
+  decoders, lists open spending permissions (`delegate`), and revokes one with the generated `revokeInstruction`, signed by
+  the user. On 2026-10-25 it found and removed a real, near-unlimited USDC permission on the author's own wallet;
 - **scans an example scam** aimed at the connected wallet (a fake "claim your airdrop" transaction, never signed):
   the guard flags the unlimited spending permission, the token account given away and the wallet handed to a program.
 
@@ -36,7 +39,7 @@ Hand-written on top of the generated parsers: they say what an instruction is, t
 wallet that signs it. `TransactionGuard.check(instructions, wallet)` returns plain-English alerts, from least to most
 serious: `INFO`, `UNCHECKED` (a program it cannot read: it says so instead of guessing), `WARNING`, `DANGER`.
 
-- **SPL Token**: giving away a token account (`DANGER`), unlimited spending permission (`DANGER`), limited permission,
+- **SPL Token and Token-2022** (its SPL Token instructions; extensions are `UNCHECKED`): giving away a token account (`DANGER`), unlimited spending permission (`DANGER`), limited permission,
   closing an account to someone else's profit, burning (`WARNING`); transfers summarized (`INFO`); other people's
   token moves you only pay for are left alone.
 - **System program**: SOL transfers (`INFO`), the wallet handed to a program with `Assign` (`DANGER`).
@@ -135,7 +138,7 @@ cd kotlin-demo && ./gradlew test
 ```
 
 Result on 2026-10-25: `BUILD SUCCESSFUL`. Token: 3 tests passed (32 + 3 + 1 checks). PDAs: 3 tests passed (23 PDAs,
-and Squads' program config equals the address read on chain). Parsing: 6 tests passed. Guard: 13 tests passed. Squads: the offline test passed;
+and Squads' program config equals the address read on chain). Parsing: 6 tests passed. Guard: 14 tests passed. Squads: the offline test passed;
 the devnet simulation (skipped unless `SQUADS_DEVNET=1`) passed with the generated PDAs.
 Regenerating every client from its IDL gives exactly the committed code (CI checks it on each push).
 

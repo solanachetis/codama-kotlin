@@ -75,6 +75,7 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
     var preview by remember { mutableStateOf<List<String>?>(null) }
     var createAlerts by remember { mutableStateOf<List<Alert>?>(null) }
     var scamAlerts by remember { mutableStateOf<List<Alert>?>(null) }
+    var permissions by remember { mutableStateOf<List<SquadsDemo.OpenPermission>?>(null) }
 
     fun run(label: String, block: suspend () -> Unit) {
         busy = true
@@ -94,6 +95,7 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
         multisig = demo.multisigOf(o)
         preview = if (multisig?.second == null) demo.preview(o) else null
         createAlerts = if (multisig?.second == null) demo.alertsForCreate(o) else null
+        permissions = demo.openPermissions(o)
     }
 
     Column(
@@ -123,6 +125,37 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
                     Text("Wallet", style = MaterialTheme.typography.titleMedium)
                     Mono(o.base58())
                     Text("Balance: ${balance?.let { "%.4f SOL".format(it / 1e9) } ?: "…"}")
+                }
+            }
+            permissions?.let { open ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Wallet health (generated Token decoder)", style = MaterialTheme.typography.titleMedium)
+                        if (open.isEmpty()) {
+                            Text("✅ No open spending permission on your token accounts.")
+                        } else {
+                            Text(
+                                "Someone may spend these tokens without asking you. Revoke what you don't recognize.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
+                            )
+                        }
+                        open.forEach { p ->
+                            Text(
+                                "🛑 ${tokenName(p.mint)} account ${shortKey(p.account)}: ${shortKey(p.delegate)} may spend " +
+                                    amount(p.delegatedAmount, p.decimals) + if (p.delegatedAmount >= ULong.MAX_VALUE / 2u) " (no real limit)" else "",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            Text("What you will sign:", style = MaterialTheme.typography.titleSmall)
+                            demo.revokeAlerts(p, o).forEach { AlertRow(it) }
+                            Button({
+                                run("Opening the wallet…") {
+                                    val sig = demo.revoke(sender, p, o) { status = it }
+                                    refresh(o)
+                                    status = "Revoked and confirmed: $sig"
+                                }
+                            }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Revoke (you sign)") }
+                        }
+                    }
                 }
             }
             config?.let { (address, c) ->
@@ -211,6 +244,19 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
 
 /** Multisig account rent (~0.0034 SOL for one member) plus the fee, rounded up. */
 private const val MIN_LAMPORTS = 5_000_000L
+
+private fun shortKey(k: SolanaPublicKey) = k.base58().let { "${it.take(4)}…${it.takeLast(4)}" }
+
+private fun tokenName(mint: SolanaPublicKey) = when (mint.base58()) {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" -> "USDC"
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" -> "USDT"
+    "So11111111111111111111111111111111111111112" -> "Wrapped SOL"
+    else -> "Token ${shortKey(mint)}"
+}
+
+private fun amount(units: ULong, decimals: Int?): String =
+    if (decimals == null) "$units base units"
+    else java.math.BigDecimal(units.toString()).movePointLeft(decimals).stripTrailingZeros().toPlainString()
 
 @Composable
 private fun AlertRow(alert: Alert) {
