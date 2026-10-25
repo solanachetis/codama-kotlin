@@ -174,11 +174,11 @@ function readExpr(type, hint) {
     case 'numberTypeNode': return `r.${type.format}(${type.format.match(/^[ui]8$/) ? '' : 'bigEndian = ' + be(type)})`;
     case 'publicKeyTypeNode': return 'SolanaPublicKey(r.bytes(32))';
     case 'booleanTypeNode': return `(r.${type.size.format}().toLong() != 0L)`;
-    case 'stringTypeNode': return 'r.remaining().decodeToString()';
+    case 'stringTypeNode': return 'r.remaining().decodeToString(throwOnInvalidSequence = true)';
     case 'bytesTypeNode': return 'r.remaining()';
     case 'sizePrefixTypeNode': {
       const p = type.prefix;
-      return `r.bytes(r.${p.format}(${p.format.match(/^[ui]8$/) ? '' : 'bigEndian = ' + be(p)}).toInt())${type.type.kind === 'stringTypeNode' ? '.decodeToString()' : ''}`;
+      return `r.bytes(r.${p.format}(${p.format.match(/^[ui]8$/) ? '' : 'bigEndian = ' + be(p)}).toInt())${type.type.kind === 'stringTypeNode' ? '.decodeToString(throwOnInvalidSequence = true)' : ''}`;
     }
     case 'fixedSizeTypeNode':
       if (type.type.kind !== 'bytesTypeNode') unsupported.push(`fixed size of ${type.type.kind}`);
@@ -493,16 +493,24 @@ ${seeds.map((s) => `        ${s},`).join('\n')}
 }
 
 // Instructions
+const parsers = []; // what parse<Program>Instruction needs for each instruction
 for (const ix of program.instructions) {
   const fnName = `${camel(ix.name)}Instruction`;
   const params = []; // { name, kt, def, docs }
   const metas = [];
+  const accountReads = []; // parsing: where each builder parameter comes from in the account list
+  const argReads = [];
+  const discStmts = [];
+  let discOk = true;
   const remainingSignerArgs = (ix.remainingAccounts || [])
     .filter((r) => r.isSigner === true && r.value.kind === 'argumentValueNode')
     .map((r) => ident(r.value.name));
 
-  for (const acc of ix.accounts) {
+  ix.accounts.forEach((acc, i) => {
     const n = ident(acc.name);
+    accountReads.push(acc.isOptional
+      ? `val ${n} = metas[${i}].publicKey.takeUnless { it.bytes.contentEquals(ixProgramId.bytes) }`
+      : `val ${n} = metas[${i}].publicKey`);
     let def = null;
     if (acc.defaultValue) {
       def = valueLiteral(acc.defaultValue, { kind: 'publicKeyTypeNode' });
@@ -515,13 +523,17 @@ for (const ix of program.instructions) {
     let signer;
     if (acc.isSigner === 'either') {
       if (remainingSignerArgs.length) signer = remainingSignerArgs.map((r) => `${r}.isEmpty()`).join(' && ');
-      else { params.push({ name: `${n}IsSigner`, kt: 'Boolean', def: 'true', docs: [`Whether \`${acc.name}\` signs this instruction.`] }); signer = `${n}IsSigner`; }
+      else {
+        params.push({ name: `${n}IsSigner`, kt: 'Boolean', def: 'true', docs: [`Whether \`${acc.name}\` signs this instruction.`] });
+        accountReads.push(`val ${n}IsSigner = metas[${i}].isSigner`);
+        signer = `${n}IsSigner`;
+      }
     } else signer = acc.isSigner ? 'true' : 'false';
     if (acc.isOptional) {
       // optionalAccountStrategy "programId": a missing optional account is replaced by the program id.
       metas.push(`add(if (${n} != null) AccountMeta(${n}, isSigner = ${signer}, isWritable = ${acc.isWritable}) else AccountMeta(programId, isSigner = false, isWritable = false))`);
     } else metas.push(`add(AccountMeta(${n}, isSigner = ${signer}, isWritable = ${acc.isWritable}))`);
-  }
+  });
 
   const dataStmts = [];
   // An argument may share its name with an account (Squads: configAuthority); the argument gets "Arg".
@@ -530,20 +542,32 @@ for (const ix of program.instructions) {
     const n = ident(accountNames.has(arg.name) ? `${arg.name}Arg` : arg.name);
     const hint = pascal(ix.name) + pascal(arg.name);
     if (arg.defaultValueStrategy === 'omitted' && arg.defaultValue) {
-      dataStmts.push(...writeStmts(arg.type, valueLiteral(arg.defaultValue, arg.type), hint));
+      const stmts = writeStmts(arg.type, valueLiteral(arg.defaultValue, arg.type), hint);
+      dataStmts.push(...stmts);
+      // The constant arguments in front of the data (discriminators) are what identifies the instruction.
+      if (argReads.length) discOk = false; else discStmts.push(...stmts);
       continue;
     }
     const def = arg.defaultValue ? valueLiteral(arg.defaultValue, arg.type) : null;
     if (arg.defaultValue && def === null) unsupported.push(`argument default ${arg.defaultValue.kind} (${ix.name}.${arg.name}) -> made required`);
     params.push({ name: n, kt: ktType(arg.type, hint), def, docs: arg.docs });
     dataStmts.push(...writeStmts(arg.type, n, hint));
+    argReads.push(`val ${n} = ${readExpr(arg.type, hint)}`);
   }
 
+  const remaining = (ix.remainingAccounts || []).filter((r) => r.value.kind === 'argumentValueNode');
   for (const r of ix.remainingAccounts || []) {
     if (r.value.kind !== 'argumentValueNode') { unsupported.push(`remaining accounts ${r.value.kind} (${ix.name})`); continue; }
     const n = ident(r.value.name);
     params.push({ name: n, kt: 'List<SolanaPublicKey>', def: r.isOptional ? 'emptyList()' : null, docs: r.docs });
     metas.push(`${n}.forEach { add(AccountMeta(it, isSigner = ${r.isSigner === true}, isWritable = ${r.isWritable === true})) }`);
+    accountReads.push(`val ${n} = metas.drop(${ix.accounts.length}).map { it.publicKey }`);
+  }
+  // Parsing needs a discriminator in front, and at most one list of remaining accounts (it takes all the rest).
+  if (discOk && discStmts.length && remaining.length <= 1) {
+    parsers.push({ ix, fnName, fields: params.slice(), accountReads, argReads, discStmts });
+  } else {
+    parsers.push({ ix, skipped: true });
   }
   params.push({ name: 'programId', kt: 'SolanaPublicKey', def: `${programObject}.PROGRAM_ID`, docs: [] });
 
@@ -574,6 +598,86 @@ ${metas.length ? `        buildList {\n${metas.map((m) => `            ${m}`).jo
     `${basePackage}.hex`,
     `${basePackage}.types.*`,
   ])}\n${body}`);
+}
+
+// Parsing: bytes + accounts -> which instruction, with its accounts by name and its arguments.
+// Each decoded instruction can rebuild itself with the generated builder, to the same bytes.
+const parsable = parsers.filter((p) => !p.skipped);
+if (parsable.length) {
+  const sealed = `${programName}Instruction`;
+  const discConst = (p) => `${screaming(p.ix.name)}_DISCRIMINATOR`;
+  const discKotlin = (p) => `DataWriter().also { w -> ${p.discStmts.join('; ')} }.toByteArray()`;
+  const seen = new Map();
+  for (const p of parsable) {
+    const key = p.discStmts.join(';');
+    if (seen.has(key)) unsupported.push(`parse: ${p.ix.name} and ${seen.get(key)} share a discriminator`);
+    seen.set(key, p.ix.name);
+  }
+  const variants = parsable.map((p) => {
+    const name = pascal(p.ix.name);
+    const fields = p.fields.filter((f) => f.name !== 'programId');
+    const call = `${p.fnName}(${[...fields.map((f) => `${f.name} = ${f.name}`), 'programId = programId'].join(', ')})`;
+    const override = `override fun toInstruction(programId: SolanaPublicKey): TransactionInstruction = ${call}`;
+    return fields.length
+      ? `${kdoc(p.ix.docs, '    ')}    data class ${name}(\n${fields.map((f) => `        val ${f.name}: ${f.kt},`).join('\n')}\n    ) : ${sealed}() {\n        ${override}\n    }`
+      : `${kdoc(p.ix.docs, '    ')}    data object ${name} : ${sealed}() {\n        ${override}\n    }`;
+  });
+  const parseFns = parsable.map((p) => {
+    const name = pascal(p.ix.name);
+    const fields = p.fields.filter((f) => f.name !== 'programId');
+    return `private val ${discConst(p)} = ${discKotlin(p)}
+
+private fun parse${name}(ixData: ByteArray, metas: List<AccountMeta>, ixProgramId: SolanaPublicKey): ${sealed}.${name}? {
+    if (!ixData.startsWithBytes(${discConst(p)}) || metas.size < ${p.ix.accounts.length}) return null
+    return runCatching {
+        val r = DataReader(ixData, ${discConst(p)}.size)
+${[...p.argReads, ...p.accountReads].map((l) => `        ${l}`).join('\n')}
+        if (r.hasRemaining()) return null
+        ${fields.length ? `${sealed}.${name}(${fields.map((f) => `${f.name} = ${f.name}`).join(', ')})` : `${sealed}.${name}`}
+    }.getOrNull()
+}`;
+  });
+  const skipped = parsers.filter((p) => p.skipped).map((p) => p.ix.name);
+  files.set(join(pkgDir('instructions'), `${sealed}.kt`), `${header('instructions', [
+    'com.solana.publickey.SolanaPublicKey',
+    'com.solana.transaction.AccountMeta',
+    'com.solana.transaction.TransactionInstruction',
+    `${basePackage}.${programObject}`,
+    `${basePackage}.DataWriter`,
+    `${basePackage}.DataReader`,
+    `${basePackage}.hex`,
+    `${basePackage}.types.*`,
+  ])}
+/** A decoded ${program.name} instruction: which one it is, its accounts by name and its arguments. */
+sealed class ${sealed} {
+    /** Builds this instruction again with the generated builder: same data bytes, same accounts. */
+    abstract fun toInstruction(programId: SolanaPublicKey = ${programObject}.PROGRAM_ID): TransactionInstruction
+
+${variants.join('\n\n')}
+}
+
+/**
+ * Decodes [instruction] if it belongs to the program (by default [${programObject}.PROGRAM_ID]) and its data
+ * starts with the discriminator of one of its instructions, else returns null. Every data byte must be read and
+ * there must be enough accounts, so a lucky prefix is not enough.${skipped.length ? `\n *\n * Not recognized (no leading discriminator, or several remaining-account lists): ${skipped.join(', ')}.` : ''}
+ */
+fun parse${programName}Instruction(
+    instruction: TransactionInstruction,
+    programId: SolanaPublicKey = ${programObject}.PROGRAM_ID,
+): ${sealed}? {
+    if (!instruction.programId.bytes.contentEquals(programId.bytes)) return null
+    for (parse in PARSERS) parse(instruction.data, instruction.accounts, programId)?.let { return it }
+    return null
+}
+
+private val PARSERS: List<(ByteArray, List<AccountMeta>, SolanaPublicKey) -> ${sealed}?> = listOf(
+${parsable.map((p) => `    ::parse${pascal(p.ix.name)},`).join('\n')}
+)
+
+private fun ByteArray.startsWithBytes(prefix: ByteArray) = size >= prefix.size && copyOfRange(0, prefix.size).contentEquals(prefix)
+
+${parseFns.join('\n\n')}
+`);
 }
 
 // Inline structs discovered while rendering instructions (e.g. batch items)

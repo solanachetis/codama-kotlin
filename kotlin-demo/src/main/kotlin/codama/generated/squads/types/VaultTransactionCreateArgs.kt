@@ -35,7 +35,7 @@ data class VaultTransactionCreateArgs(
             val f0 = r.u8()
             val f1 = r.u8()
             val f2 = r.bytes(r.u32(bigEndian = false).toInt())
-            val f3 = (if (r.u8().toLong() == 0L) { null } else r.bytes(r.u32(bigEndian = false).toInt()).decodeToString())
+            val f3 = (if (r.u8().toLong() == 0L) { null } else r.bytes(r.u32(bigEndian = false).toInt()).decodeToString(throwOnInvalidSequence = true))
             return VaultTransactionCreateArgs(vaultIndex = f0, ephemeralSigners = f1, transactionMessage = f2, memo = f3)
         }
 

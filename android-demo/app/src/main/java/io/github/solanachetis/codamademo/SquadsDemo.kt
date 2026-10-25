@@ -3,7 +3,9 @@ package io.github.solanachetis.codamademo
 import android.net.Uri
 import codama.generated.squads.accounts.Multisig
 import codama.generated.squads.accounts.ProgramConfig
+import codama.generated.squads.instructions.SquadsMultisigProgramInstruction
 import codama.generated.squads.instructions.multisigCreateV2Instruction
+import codama.generated.squads.instructions.parseSquadsMultisigProgramInstruction
 import codama.generated.squads.types.Member
 import codama.generated.squads.types.Permissions
 import com.solana.mobilewalletadapter.clientlib.ActivityResultSender
@@ -63,6 +65,50 @@ class SquadsDemo(val network: Network) {
         return address to rpc.accountData(address)?.let { Multisig.decode(it) }
     }
 
+    private suspend fun createInstruction(owner: SolanaPublicKey, configAddress: SolanaPublicKey, config: ProgramConfig) =
+        multisigCreateV2Instruction(
+            programConfig = configAddress,
+            treasury = config.treasury,
+            multisig = findMultisigPda(owner),
+            createKey = owner,
+            creator = owner,
+            configAuthority = null,
+            threshold = 1u,
+            members = listOf(Member(owner, Permissions(Permission.ALL))),
+            timeLock = 0u,
+            rentCollector = owner,
+            // No memo: it would be written on chain and tag the user's wallet as having run this demo.
+            memo = null,
+        )
+
+    /**
+     * What the user is about to sign, read back from the instruction's bytes by the generated parser
+     * (`parseSquadsMultisigProgramInstruction`), not from the values the app meant to put in.
+     */
+    suspend fun preview(owner: SolanaPublicKey): List<String> {
+        val (configAddress, config) = programConfig()
+        val ix = createInstruction(owner, configAddress, config)
+        val short = { k: SolanaPublicKey -> k.base58().let { "${it.take(6)}…${it.takeLast(4)}" } }
+        return when (val parsed = parseSquadsMultisigProgramInstruction(ix)) {
+            is SquadsMultisigProgramInstruction.MultisigCreateV2 -> listOf(
+                "Squads v4 · MultisigCreateV2",
+                "New multisig: ${short(parsed.multisig)}",
+                "Threshold ${parsed.threshold} of ${parsed.members.size} · time lock ${parsed.timeLock} s",
+            ) + parsed.members.map { "Member ${short(it.key)} · ${permissions(it.permissions.mask)}" } + listOf(
+                "Paid by: ${short(parsed.creator)} · rent back to: ${parsed.rentCollector?.let(short) ?: "nobody"}",
+                "Memo: ${parsed.memo ?: "none"} · config authority: ${parsed.configAuthority?.let(short) ?: "none (members decide)"}",
+            )
+            null -> listOf("Not a Squads instruction this app can read.")
+            else -> listOf("Squads v4 · ${parsed::class.simpleName}")
+        }
+    }
+
+    private fun permissions(mask: UByte): String = listOfNotNull(
+        "initiate".takeIf { mask.toInt() and 1 != 0 },
+        "vote".takeIf { mask.toInt() and 2 != 0 },
+        "execute".takeIf { mask.toInt() and 4 != 0 },
+    ).joinToString(" + ").ifEmpty { "no permissions" }
+
     /**
      * Creates a 1-of-1 Squads multisig owned by the wallet, with the generated `multisigCreateV2Instruction`.
      * The wallet is also the create key, so each wallet has one demo multisig and no extra signer is needed.
@@ -74,20 +120,7 @@ class SquadsDemo(val network: Network) {
         val result = wallet.transact(sender) { auth ->
             runCatching {
                 val owner = SolanaPublicKey(auth.accounts.first().publicKey)
-                val create = multisigCreateV2Instruction(
-                    programConfig = configAddress,
-                    treasury = config.treasury,
-                    multisig = findMultisigPda(owner),
-                    createKey = owner,
-                    creator = owner,
-                    configAuthority = null,
-                    threshold = 1u,
-                    members = listOf(Member(owner, Permissions(Permission.ALL))),
-                    timeLock = 0u,
-                    rentCollector = owner,
-                    // No memo: it would be written on chain and tag the user's wallet as having run this demo.
-                    memo = null,
-                )
+                val create = createInstruction(owner, configAddress, config)
                 // Fetched inside the wallet session, right before signing: a blockhash only lives about a minute.
                 LegacyTransaction.compile(owner, rpc.latestBlockhash(), listOf(create))
             }.onFailure { failure = it }.getOrNull()?.let { signAndSendTransactions(arrayOf(it)) }

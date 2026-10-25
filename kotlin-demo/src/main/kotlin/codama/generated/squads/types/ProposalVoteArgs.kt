@@ -18,7 +18,7 @@ data class ProposalVoteArgs(
 
     companion object {
         internal fun read(r: DataReader): ProposalVoteArgs {
-            val f0 = (if (r.u8().toLong() == 0L) { null } else r.bytes(r.u32(bigEndian = false).toInt()).decodeToString())
+            val f0 = (if (r.u8().toLong() == 0L) { null } else r.bytes(r.u32(bigEndian = false).toInt()).decodeToString(throwOnInvalidSequence = true))
             return ProposalVoteArgs(memo = f0)
         }
 

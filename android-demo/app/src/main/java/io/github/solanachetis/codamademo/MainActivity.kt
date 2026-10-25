@@ -70,6 +70,7 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
         )
     }
     var busy by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<List<String>?>(null) }
 
     fun run(label: String, block: suspend () -> Unit) {
         busy = true
@@ -87,6 +88,7 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
         balance = demo.balance(o)
         config = demo.programConfig()
         multisig = demo.multisigOf(o)
+        preview = if (multisig?.second == null) demo.preview(o) else null
     }
 
     Column(
@@ -145,6 +147,18 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
                 }
             }
             val enough = (balance ?: 0L) >= MIN_LAMPORTS
+            preview?.let { lines ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("What you will sign (generated parser)", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Read back from the instruction's bytes, not from what the app meant to send.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
+                        )
+                        lines.forEach { Text(it) }
+                    }
+                }
+            }
             if (multisig?.second == null && !enough) {
                 Text(
                     "Creating the multisig needs about 0.005 SOL on this wallet (rent and fee)." +
