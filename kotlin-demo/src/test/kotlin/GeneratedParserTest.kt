@@ -88,6 +88,23 @@ class GeneratedParserTest {
         assertEquals(listOf(key(5).base58(), key(6).base58()), parsed.multiSigners.map { it.base58() })
     }
 
+    /**
+     * syncNative's rent account is optional with the "omitted" strategy: left out, not replaced by the program id.
+     * Wallets send it with one account (seen in mainnet transactions on 2026-10-25); it must be built and read so.
+     */
+    @Test
+    fun leftOutOptionalAccounts() {
+        val withoutRent = codama.generated.token.instructions.syncNativeInstruction(key(1), rent = null)
+        assertEquals(1, withoutRent.accounts.size, "the missing rent account is left out")
+        val real = TransactionInstruction(TokenProgram.PROGRAM_ID, listOf(AccountMeta(key(1), false, true)), byteArrayOf(0x11))
+        val parsed = assertIs<TokenInstruction.SyncNative>(parseTokenInstruction(real))
+        assertNull(parsed.rent)
+        assertSameInstruction(real, parsed.toInstruction(), "syncNative without rent")
+        val withRent = codama.generated.token.instructions.syncNativeInstruction(key(1))
+        assertEquals(2, withRent.accounts.size, "the default rent sysvar is kept")
+        assertSameInstruction(withRent, assertNotNull(parseTokenInstruction(withRent)).toInstruction(), "syncNative with rent")
+    }
+
     /** Squads: optional accounts, vectors of structs, sealed classes, options, raw bytes. */
     @Test
     fun parsesSquadsInstructions() {

@@ -753,11 +753,11 @@ private fun parseInitializeAccount2(ixData: ByteArray, metas: List<AccountMeta>,
 private val SYNC_NATIVE_DISCRIMINATOR = DataWriter().also { w -> w.u8(17u) }.toByteArray()
 
 private fun parseSyncNative(ixData: ByteArray, metas: List<AccountMeta>, ixProgramId: SolanaPublicKey): TokenInstruction.SyncNative? {
-    if (!ixData.startsWithBytes(SYNC_NATIVE_DISCRIMINATOR) || metas.size < 2) return null
+    if (!ixData.startsWithBytes(SYNC_NATIVE_DISCRIMINATOR) || metas.size < 1) return null
     return runCatching {
         val r = DataReader(ixData, SYNC_NATIVE_DISCRIMINATOR.size)
         val account = metas[0].publicKey
-        val rent = metas[1].publicKey.takeUnless { it.bytes.contentEquals(ixProgramId.bytes) }
+        val rent = metas.getOrNull(1)?.publicKey
         if (r.hasRemaining()) return null
         TokenInstruction.SyncNative(account = account, rent = rent)
     }.getOrNull()

@@ -31,7 +31,7 @@ fun syncNativeInstruction(
         programId,
         buildList {
             add(AccountMeta(account, isSigner = false, isWritable = true))
-            add(if (rent != null) AccountMeta(rent, isSigner = false, isWritable = false) else AccountMeta(programId, isSigner = false, isWritable = false))
+            if (rent != null) add(AccountMeta(rent, isSigner = false, isWritable = false))
         },
         w.toByteArray(),
     )

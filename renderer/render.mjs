@@ -505,18 +505,25 @@ for (const ix of program.instructions) {
   const remainingSignerArgs = (ix.remainingAccounts || [])
     .filter((r) => r.isSigner === true && r.value.kind === 'argumentValueNode')
     .map((r) => ident(r.value.name));
+  // optionalAccountStrategy: "programId" puts the program id in place of a missing optional account, "omitted"
+  // leaves it out (SPL Token's syncNative and its optional rent sysvar).
+  const omitOptional = ix.optionalAccountStrategy === 'omitted';
+  const optionalCount = ix.accounts.filter((a) => a.isOptional).length;
+  const optionalTrailing = ix.accounts.every((a, i) => !a.isOptional || ix.accounts.slice(i).every((b) => b.isOptional));
+  const minAccounts = omitOptional ? ix.accounts.length - optionalCount : ix.accounts.length;
 
   ix.accounts.forEach((acc, i) => {
     const n = ident(acc.name);
-    accountReads.push(acc.isOptional
-      ? `val ${n} = metas[${i}].publicKey.takeUnless { it.bytes.contentEquals(ixProgramId.bytes) }`
-      : `val ${n} = metas[${i}].publicKey`);
+    accountReads.push(!acc.isOptional ? `val ${n} = metas[${i}].publicKey`
+      : omitOptional ? `val ${n} = metas.getOrNull(${i})?.publicKey`
+      : `val ${n} = metas[${i}].publicKey.takeUnless { it.bytes.contentEquals(ixProgramId.bytes) }`);
     let def = null;
     if (acc.defaultValue) {
       def = valueLiteral(acc.defaultValue, { kind: 'publicKeyTypeNode' });
       if (def === null && acc.defaultValue.kind !== 'identityValueNode') unsupported.push(`account default ${acc.defaultValue.kind} (${ix.name}.${acc.name}) -> made required`);
     }
-    // Optional accounts keep their IDL default; passing null explicitly falls back to the program id.
+    // Optional accounts keep their IDL default; passing null explicitly falls back to the program id, or leaves
+    // the account out with the "omitted" strategy.
     if (acc.isOptional && def === null) def = 'null';
     params.push({ name: n, kt: acc.isOptional ? 'SolanaPublicKey?' : 'SolanaPublicKey', def, docs: acc.docs });
 
@@ -529,8 +536,9 @@ for (const ix of program.instructions) {
         signer = `${n}IsSigner`;
       }
     } else signer = acc.isSigner ? 'true' : 'false';
-    if (acc.isOptional) {
-      // optionalAccountStrategy "programId": a missing optional account is replaced by the program id.
+    if (acc.isOptional && omitOptional) {
+      metas.push(`if (${n} != null) add(AccountMeta(${n}, isSigner = ${signer}, isWritable = ${acc.isWritable}))`);
+    } else if (acc.isOptional) {
       metas.push(`add(if (${n} != null) AccountMeta(${n}, isSigner = ${signer}, isWritable = ${acc.isWritable}) else AccountMeta(programId, isSigner = false, isWritable = false))`);
     } else metas.push(`add(AccountMeta(${n}, isSigner = ${signer}, isWritable = ${acc.isWritable}))`);
   });
@@ -564,8 +572,10 @@ for (const ix of program.instructions) {
     accountReads.push(`val ${n} = metas.drop(${ix.accounts.length}).map { it.publicKey }`);
   }
   // Parsing needs a discriminator in front, and at most one list of remaining accounts (it takes all the rest).
-  if (discOk && discStmts.length && remaining.length <= 1) {
-    parsers.push({ ix, fnName, fields: params.slice(), accountReads, argReads, discStmts });
+  // Left-out optional accounts must be unambiguous: one at most, at the end, and no remaining accounts after it.
+  const omittedOk = !omitOptional || optionalCount === 0 || (optionalCount === 1 && optionalTrailing && remaining.length === 0);
+  if (discOk && discStmts.length && remaining.length <= 1 && omittedOk) {
+    parsers.push({ ix, fnName, fields: params.slice(), accountReads, argReads, discStmts, minAccounts });
   } else {
     parsers.push({ ix, skipped: true });
   }
@@ -628,7 +638,7 @@ if (parsable.length) {
     return `private val ${discConst(p)} = ${discKotlin(p)}
 
 private fun parse${name}(ixData: ByteArray, metas: List<AccountMeta>, ixProgramId: SolanaPublicKey): ${sealed}.${name}? {
-    if (!ixData.startsWithBytes(${discConst(p)}) || metas.size < ${p.ix.accounts.length}) return null
+    if (!ixData.startsWithBytes(${discConst(p)}) || metas.size < ${p.minAccounts}) return null
     return runCatching {
         val r = DataReader(ixData, ${discConst(p)}.size)
 ${[...p.argReads, ...p.accountReads].map((l) => `        ${l}`).join('\n')}
@@ -659,7 +669,7 @@ ${variants.join('\n\n')}
 /**
  * Decodes [instruction] if it belongs to the program (by default [${programObject}.PROGRAM_ID]) and its data
  * starts with the discriminator of one of its instructions, else returns null. Every data byte must be read and
- * there must be enough accounts, so a lucky prefix is not enough.${skipped.length ? `\n *\n * Not recognized (no leading discriminator, or several remaining-account lists): ${skipped.join(', ')}.` : ''}
+ * there must be enough accounts, so a lucky prefix is not enough.${skipped.length ? `\n *\n * Not recognized (no leading discriminator, several remaining-account lists, or left-out optional accounts that would be ambiguous): ${skipped.join(', ')}.` : ''}
  */
 fun parse${programName}Instruction(
     instruction: TransactionInstruction,
