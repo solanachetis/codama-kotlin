@@ -51,6 +51,10 @@ serious: `INFO`, `UNCHECKED` (a program it cannot read: it says so instead of gu
 
 It only knows what the instructions say: not who an address belongs to, nor what an unknown program does.
 
+Alerts are in English by default; pass `GuardTexts.FR` for French (`TransactionGuard.check(instructions, wallet, GuardTexts.FR)`).
+A spending permission from 2^63 base units up (`TransactionGuard.UNLIMITED`) counts as unlimited: drainers often ask
+for a little less than the maximum.
+
 Mainnet by default, devnet as an option. The wallet must be on the same network as the app, or it refuses to sign
 ("network mismatch"). Seed Vault Wallet runs on mainnet.
 
@@ -59,7 +63,7 @@ cd android-demo && ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The transaction is compiled by hand (`LegacyTransaction.kt`): the wallet is both a read-only signer (create key) and a
+The transaction is compiled by hand (`core/LegacyTransaction.kt`): the wallet is both a read-only signer (create key) and a
 writable signer (creator), the exact case where `web3-solana` 0.3.1 `Message.Builder` writes a wrong header.
 
 ## Squads v4 in Kotlin
@@ -156,6 +160,26 @@ val ix = transferCheckedInstruction(
 // then build a Message/Transaction with web3-solana and sign it through MWA as usual
 ```
 
+## Reusable core (`kotlin-demo/src/main/kotlin/core/`)
+
+Plain Kotlin/JVM (no Android classes), shared by the Android demo and by apps that include these sources:
+
+| File | What it does |
+|---|---|
+| `SolanaRpc.kt` | The JSON-RPC calls a wallet app needs, blocking (run them off the main thread). Every read asks for `confirmed` data. The HTTP transport can be swapped (tests run without a network). `RpcException.rateLimited` tells a busy public server (HTTP 429) apart from other failures. |
+| `LegacyTransaction.kt` | Compiles a legacy transaction with empty signatures (works around `web3-core#47`), and Base58 for signatures. |
+| `TransactionReader.kt` | Reads a transaction back from its bytes, legacy or v0, whole or message only, so the guard can check what a dapp asks you to sign. Accounts from address lookup tables are marked, not guessed. |
+| `WalletHealth.kt` | Open spending permissions of a wallet (Token and Token-2022), their rating by the guard, and the unsigned `revoke` transaction. |
+| `ExampleScam.kt` | A "claim your airdrop" drainer transaction, for showing what the guard says. Never sendable. |
+| `DevnetTestApproval.kt` | Devnet testing: one transaction, signed by the wallet alone, that creates a test token and an unlimited spending permission on it. |
+
+Include them in an Android app the way `android-demo` does:
+
+```kotlin
+sourceSets["main"].java.srcDir("path/to/codama-kotlin/kotlin-demo/src/main/kotlin")
+// dependencies: com.solanamobile:web3-solana:0.3.1, org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0
+```
+
 ## Limits (honest list)
 
 - **It is a standalone Node script reading the Codama JSON, not yet a `@codama/renderers-kotlin`
@@ -186,6 +210,7 @@ scripts/anchor-to-codama.mjs   Anchor IDL -> Codama JSON (@codama/nodes-from-anc
 scripts/vectors.mjs            reference vectors from the official JS client and Solana Kit
 kotlin-demo/                   Gradle project: generated code, Squads helpers, byte-for-byte and devnet tests
 android-demo/                  Android app for the Seeker: the generated Squads client, signed with Mobile Wallet Adapter
-kotlin-demo/src/main/kotlin/safety/   the transaction guard (hand-written, on the generated parsers)
+kotlin-demo/src/main/kotlin/safety/   the transaction guard (hand-written, on the generated parsers), English and French
+kotlin-demo/src/main/kotlin/core/     reusable RPC, transaction compile/read, wallet health (see "Reusable core")
 .github/workflows/ci.yml       regenerates the clients, checks they match the committed code, runs the tests
 ```
