@@ -168,7 +168,7 @@ Plain Kotlin/JVM (no Android classes), shared by the Android demo and by apps th
 |---|---|
 | `SolanaRpc.kt` | The JSON-RPC calls a wallet app needs, blocking (run them off the main thread). Every read asks for `confirmed` data. The HTTP transport can be swapped (tests run without a network). `RpcException.rateLimited` tells a busy public server (HTTP 429) apart from other failures. |
 | `LegacyTransaction.kt` | Compiles a legacy transaction with empty signatures (works around `web3-core#47`), and Base58 for signatures. |
-| `TransactionReader.kt` | Reads a transaction back from its bytes, legacy or v0, whole or message only, so the guard can check what a dapp asks you to sign. Accounts from address lookup tables are marked, not guessed. |
+| `TransactionReader.kt` | Reads a transaction back from its bytes, legacy, v0 or v1 (SIMD-0385), whole or message only, so the guard can check what a dapp asks you to sign. Accounts from address lookup tables are marked, not guessed. |
 | `WalletHealth.kt` | Open spending permissions of a wallet (Token and Token-2022), their rating by the guard, and the unsigned `revoke` transaction. |
 | `ExampleScam.kt` | A "claim your airdrop" drainer transaction, for showing what the guard says. Never sendable. |
 | `DevnetTestApproval.kt` | Devnet testing: one transaction, signed by the wallet alone, that creates a test token and an unlimited spending permission on it. |

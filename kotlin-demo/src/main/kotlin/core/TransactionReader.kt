@@ -8,22 +8,30 @@ import squads.VaultMessage
 /**
  * A transaction read back from its bytes. [usesLookupTables]: some accounts are loaded from address lookup tables;
  * their addresses are not in the bytes, so they appear as [VaultMessage.FROM_LOOKUP_TABLE].
+ * [priorityFeeLamports]: the total priority fee a v1 transaction declares in its header (null when absent or
+ * for legacy and v0, where the fee comes from ComputeBudget instructions).
  */
 data class ReadTransaction(
     val version: String,
     val feePayer: SolanaPublicKey,
     val instructions: List<TransactionInstruction>,
     val usesLookupTables: Boolean,
+    val priorityFeeLamports: ULong? = null,
 )
 
 /**
- * Reads a Solana transaction, legacy or v0, from the bytes a dapp asks a wallet to sign: either the whole
- * transaction (signatures, even empty, then message) or the message alone. Throws [IllegalArgumentException]
- * on anything else.
+ * Reads a Solana transaction, legacy, v0 or v1, from the bytes a dapp asks a wallet to sign: either the whole
+ * transaction or the message alone. Legacy and v0 put the signatures (even empty) first; v1 (SIMD-0385) starts
+ * with its version byte 0x81 and puts them last. Throws [IllegalArgumentException] on anything else.
  */
 object TransactionReader {
+    private const val V1 = 0x81
+
     fun read(bytes: ByteArray): ReadTransaction {
         require(bytes.isNotEmpty()) { "empty transaction" }
+        // Unambiguous: a legacy or v0 transaction starts with a signature count below 128, a legacy message with
+        // a signer count below 128, a v0 message with 0x80.
+        if (bytes[0].toInt() and 0xFF == V1) return readV1(Cursor(bytes))
         runCatching {
             val c = Cursor(bytes)
             val n = c.shortVec()
@@ -56,7 +64,6 @@ object TransactionReader {
         require(readonlySigned <= numRequired && readonlyUnsigned <= keys.size - numRequired) { "bad message header" }
         c.skip(32) // recent blockhash
 
-        class Raw(val program: Int, val accounts: List<Int>, val data: ByteArray)
         val raws = List(c.shortVec()) {
             val program = c.u8()
             val accounts = List(c.shortVec()) { c.u8() }
@@ -74,6 +81,52 @@ object TransactionReader {
         }
         require(c.atEnd()) { "extra bytes after the message" }
 
+        val instructions = instructions(keys, numRequired, readonlySigned, readonlyUnsigned, raws, loadedWritable, loadedReadonly)
+        return ReadTransaction(version, keys.first(), instructions, loadedWritable + loadedReadonly > 0) to numRequired
+    }
+
+    /**
+     * v1 (SIMD-0385): version, header, config mask, lifetime, counts, addresses, config values, instruction headers,
+     * instruction payloads, then the signatures, which are all there or all absent (the message alone).
+     */
+    private fun readV1(c: Cursor): ReadTransaction {
+        require(c.u8() == V1)
+        val numRequired = c.u8()
+        val readonlySigned = c.u8()
+        val readonlyUnsigned = c.u8()
+        val mask = c.u32()
+        c.skip(32) // lifetime (recent blockhash)
+        val numInstructions = c.u8()
+        val keys = List(c.u8()) { SolanaPublicKey(c.take(32)) }
+        require(numRequired >= 1 && readonlySigned < numRequired) { "bad message header" }
+        require(keys.size >= numRequired + readonlyUnsigned && keys.size <= 64 && numInstructions <= 64) { "bad message header" }
+        require(keys.map { it.base58() }.toSet().size == keys.size) { "duplicate address" }
+        require(mask and 0b11 == 0 || mask and 0b11 == 0b11) { "priority fee needs both of its bits" }
+        val values = c.take(4 * Integer.bitCount(mask))
+        val priorityFee = if (mask and 0b11 == 0b11) {
+            (0 until 8).fold(0uL) { acc, i -> acc or ((values[i].toULong() and 0xFFuL) shl (8 * i)) }
+        } else {
+            null
+        }
+        val headers = List(numInstructions) { Triple(c.u8(), c.u8(), c.u16()) }
+        val raws = headers.map { (program, accounts, data) -> Raw(program, List(accounts) { c.u8() }, c.take(data)) }
+        val rest = c.remaining()
+        require(rest == 0 || rest == 64 * numRequired) { "signatures do not match the message" }
+        val instructions = instructions(keys, numRequired, readonlySigned, readonlyUnsigned, raws, 0, 0)
+        return ReadTransaction("v1", keys.first(), instructions, usesLookupTables = false, priorityFeeLamports = priorityFee)
+    }
+
+    private class Raw(val program: Int, val accounts: List<Int>, val data: ByteArray)
+
+    private fun instructions(
+        keys: List<SolanaPublicKey>,
+        numRequired: Int,
+        readonlySigned: Int,
+        readonlyUnsigned: Int,
+        raws: List<Raw>,
+        loadedWritable: Int,
+        loadedReadonly: Int,
+    ): List<TransactionInstruction> {
         fun writable(i: Int) = if (i < numRequired) i < numRequired - readonlySigned else i < keys.size - readonlyUnsigned
         fun account(i: Int) = when {
             i < keys.size -> AccountMeta(keys[i], i < numRequired, writable(i))
@@ -81,16 +134,16 @@ object TransactionReader {
             i < keys.size + loadedWritable + loadedReadonly -> AccountMeta(VaultMessage.FROM_LOOKUP_TABLE, false, false)
             else -> throw IllegalArgumentException("account index $i out of range")
         }
-        val instructions = raws.map { raw ->
+        return raws.map { raw ->
             require(raw.program < keys.size) { "program index ${raw.program} out of range" }
             TransactionInstruction(keys[raw.program], raw.accounts.map(::account), raw.data)
         }
-        return ReadTransaction(version, keys.first(), instructions, loadedWritable + loadedReadonly > 0) to numRequired
     }
 
     private class Cursor(private val bytes: ByteArray) {
         private var o = 0
         fun atEnd() = o == bytes.size
+        fun remaining() = bytes.size - o
         fun u8(): Int {
             require(o < bytes.size) { "unexpected end of transaction" }
             return bytes[o++].toInt() and 0xFF
@@ -100,6 +153,9 @@ object TransactionReader {
             return bytes.copyOfRange(o, o + n).also { o += n }
         }
         fun skip(n: Int) { take(n) }
+        /** Little-endian, as SIMD-0385 encodes its fixed-width fields. */
+        fun u16() = u8() or (u8() shl 8)
+        fun u32() = u16() or (u16() shl 16)
         /** Compact-u16, as Solana encodes lengths: 7 bits per byte, at most 3 bytes. */
         fun shortVec(): Int {
             var value = 0

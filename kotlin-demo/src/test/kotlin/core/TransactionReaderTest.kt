@@ -114,7 +114,7 @@ class TransactionReaderTest {
 
     @Test
     fun unknownVersionIsRejected() {
-        val message = v0Message().also { it[0] = 0x81.toByte() }
+        val message = v0Message().also { it[0] = 0x82.toByte() }
         assertFailsWith<IllegalArgumentException> { TransactionReader.read(message) }
     }
 
@@ -123,5 +123,89 @@ class TransactionReaderTest {
         val message = v0Message()
         message[message.size - 1 - 1 - 1 - 32 - 1 - 12 - 1 - 1] = 7 // second account index of the instruction → past every key
         assertFailsWith<IllegalArgumentException> { TransactionReader.read(message) }
+    }
+
+    /**
+     * A v1 message (SIMD-0385): a SOL transfer from [me] to key(5), with a priority fee of 5000 lamports and a
+     * compute-unit limit, then [extra] bytes. Signatures, when present, come after the message.
+     */
+    private fun v1Message(
+        keys: List<SolanaPublicKey> = listOf(me, key(5), system),
+        mask: Int = 0b111,
+    ): ByteArray {
+        val out = ByteArrayOutputStream()
+        fun le(value: Long, bytes: Int) = repeat(bytes) { out.write((value shr (8 * it)).toInt() and 0xFF) }
+        out.write(0x81)
+        out.write(byteArrayOf(1, 0, 1)) // one signer, system program read-only
+        le(mask.toLong(), 4)
+        out.write(ByteArray(32) { 9 }) // lifetime
+        out.write(1) // one instruction
+        out.write(keys.size)
+        keys.forEach { out.write(it.bytes) }
+        if (mask and 0b11 == 0b11) le(5000, 8)
+        if (mask and 0b100 != 0) le(200_000, 4)
+        val transfer = byteArrayOf(2, 0, 0, 0) + ByteArray(8) { (1_000_000L shr (8 * it)).toByte() }
+        out.write(2) // program index: system
+        out.write(2) // two accounts
+        le(transfer.size.toLong(), 2)
+        out.write(0); out.write(1)
+        out.write(transfer)
+        return out.toByteArray()
+    }
+
+    @Test
+    fun v1MessageAloneOrWithItsSignatures() {
+        for (bytes in listOf(v1Message(), v1Message() + ByteArray(64))) {
+            val read = TransactionReader.read(bytes)
+            assertEquals("v1", read.version)
+            assertFalse(read.usesLookupTables)
+            assertEquals(me.base58(), read.feePayer.base58())
+            assertEquals(5000uL, read.priorityFeeLamports)
+            val ix = read.instructions.single()
+            assertEquals(system.base58(), ix.programId.base58())
+            assertEquals(listOf(Triple(me.base58(), true, true), Triple(key(5).base58(), false, true)), accounts(read.instructions).single())
+            assertEquals(2, ix.data[0].toInt())
+        }
+    }
+
+    @Test
+    fun v1TransferIsSeenByTheGuard() {
+        val alerts = TransactionGuard.check(TransactionReader.read(v1Message()).instructions, me)
+        assertTrue(alerts.isNotEmpty())
+    }
+
+    @Test
+    fun v1WithoutPriorityFeeHasNone() {
+        assertEquals(null, TransactionReader.read(v1Message(mask = 0b100)).priorityFeeLamports)
+    }
+
+    @Test
+    fun v1BrokenRulesAreRejected() {
+        // Signatures must be all there or absent.
+        assertFailsWith<IllegalArgumentException> { TransactionReader.read(v1Message() + ByteArray(10)) }
+        // Duplicate addresses are invalid in v1.
+        assertFailsWith<IllegalArgumentException> { TransactionReader.read(v1Message(keys = listOf(me, me, system))) }
+        // The priority fee takes both of its bits or none.
+        assertFailsWith<IllegalArgumentException> { TransactionReader.read(v1Message(mask = 0b001)) }
+        // Cut short.
+        assertFailsWith<IllegalArgumentException> { TransactionReader.read(v1Message().copyOfRange(0, 60)) }
+    }
+
+    private fun mainnet(name: String) =
+        java.util.Base64.getDecoder().decode(javaClass.getResource("/mainnet/$name")!!.readText().trim())
+
+    /** Real pump.fun trades taken from a mainnet block (November 2026), one per format. */
+    @Test
+    fun realMainnetTransactionsAreRead() {
+        val v1 = TransactionReader.read(mainnet("pumpfun_v1.b64"))
+        assertEquals("v1", v1.version)
+        assertEquals("bwamJzztZsepfkteWRChggmXuiiCQvpLqPietdNfSXa", v1.feePayer.base58())
+        assertEquals(13, v1.instructions.size)
+        assertEquals(1_000_000uL, v1.priorityFeeLamports)
+        assertTrue(v1.instructions.any { it.programId.base58() == "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P" })
+
+        val v0 = TransactionReader.read(mainnet("pumpfun_v0.b64"))
+        assertEquals("v0", v0.version)
+        assertEquals("2zoBVS6Aeih7KMLoAtRuqHBTFZK7GqhVJgtaABkouU6g", v0.feePayer.base58())
     }
 }
