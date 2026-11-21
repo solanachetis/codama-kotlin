@@ -10,15 +10,25 @@ class GuardTexts private constructor(val lang: String, private val templates: Ma
     /** The sentence [key] with its `{n}` placeholders replaced by [args]. */
     fun t(key: String, vararg args: Any?): String {
         val template = templates[key] ?: error("no text for $key")
-        return PLACEHOLDER.replace(template) { m ->
-            val i = m.groupValues[1].toInt()
-            require(i < args.size) { "$key needs at least ${i + 1} values" }
-            args[i].toString()
+        // A plain scan, not a regex: Android's regex engine (ICU) rejects patterns the JVM accepts, such as `\{(\d)}`.
+        val out = StringBuilder(template.length + 32)
+        var i = 0
+        while (i < template.length) {
+            val c = template[i]
+            if (c == '{' && i + 2 < template.length && template[i + 1].isDigit() && template[i + 2] == '}') {
+                val n = template[i + 1] - '0'
+                require(n < args.size) { "$key needs at least ${n + 1} values" }
+                out.append(args[n].toString())
+                i += 3
+            } else {
+                out.append(c)
+                i++
+            }
         }
+        return out.toString()
     }
 
     companion object {
-        private val PLACEHOLDER = Regex("\\{(\\d)}")
 
         val EN = GuardTexts(
             "en",
