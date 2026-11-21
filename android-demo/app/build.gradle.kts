@@ -49,4 +49,6 @@ dependencies {
     implementation("com.solanamobile:mobile-wallet-adapter-clientlib-ktx:2.1.1")
     // Same library the generated clients are written against.
     implementation("com.solanamobile:web3-solana:0.3.1")
+    // JSON for the shared core RPC client.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 }

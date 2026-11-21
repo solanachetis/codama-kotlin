@@ -26,7 +26,15 @@ import codama.generated.token.pdas.findAssociatedTokenPda
 import codama.generated.token.types.AuthorityType
 import safety.Alert
 import safety.TransactionGuard
+import core.Base58
+import core.ExampleScam
+import core.LegacyTransaction
+import core.OpenPermission
+import core.SolanaRpc
+import core.WalletHealth
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import squads.Permission
 import codama.generated.squads.pdas.findMultisigPda
 import codama.generated.squads.pdas.findProgramConfigPda
@@ -44,6 +52,9 @@ enum class Network(val label: String, val rpcUrl: String) {
 class SquadsDemo(val network: Network) {
     private val rpc = SolanaRpc(network.rpcUrl)
 
+    /** The core RPC client blocks: every call runs on the IO dispatcher. */
+    private suspend fun <T> io(block: SolanaRpc.() -> T): T = withContext(Dispatchers.IO) { rpc.block() }
+
     private val wallet = MobileWalletAdapter(
         connectionIdentity = ConnectionIdentity(
             identityUri = Uri.parse(IDENTITY_URI),
@@ -60,21 +71,21 @@ class SquadsDemo(val network: Network) {
             is TransactionResult.Failure -> error(result.message)
         }
 
-    suspend fun balance(owner: SolanaPublicKey): Long = rpc.balance(owner)
+    suspend fun balance(owner: SolanaPublicKey): Long = io { balance(owner) }
 
-    suspend fun airdrop(owner: SolanaPublicKey): String = rpc.requestAirdrop(owner, 1_000_000_000L)
+    suspend fun airdrop(owner: SolanaPublicKey): String = io { requestAirdrop(owner, 1_000_000_000L) }
 
     /** Squads' global config, decoded with the generated [ProgramConfig] decoder. */
     suspend fun programConfig(): Pair<SolanaPublicKey, ProgramConfig> {
         val address = findProgramConfigPda()
-        val data = rpc.accountData(address) ?: error("No Squads ProgramConfig on ${network.label}")
+        val data = io { accountData(address) } ?: error("No Squads ProgramConfig on ${network.label}")
         return address to ProgramConfig.decode(data)
     }
 
     /** The multisig whose create key is [owner], decoded with the generated [Multisig] decoder, or null. */
     suspend fun multisigOf(owner: SolanaPublicKey): Pair<SolanaPublicKey, Multisig?> {
         val address = findMultisigPda(owner)
-        return address to rpc.accountData(address)?.let { Multisig.decode(it) }
+        return address to io { accountData(address) }?.let { Multisig.decode(it) }
     }
 
     private suspend fun createInstruction(owner: SolanaPublicKey, configAddress: SolanaPublicKey, config: ProgramConfig) =
@@ -124,28 +135,9 @@ class SquadsDemo(val network: Network) {
     /**
      * What a wallet-draining site asks you to sign behind a "claim your airdrop" button, aimed at [owner]:
      * a harmless-looking 0.001 SOL fee, an unlimited spending permission, the ownership of a token account, and the
-     * wallet itself handed to a program. Built only to be scanned: it is never signed nor sent.
+     * wallet itself handed to a program. Built only to be scanned (by the shared [ExampleScam]): never signed nor sent.
      */
-    suspend fun scanExampleScam(owner: SolanaPublicKey): List<Alert> {
-        val attacker = SolanaPublicKey.from("Attack1111111111111111111111111111111111111")
-        val usdc = SolanaPublicKey.from("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-        val myUsdcAccount = findAssociatedTokenPda(owner, TokenProgram.PROGRAM_ID, usdc)
-        val system = SolanaPublicKey.from("11111111111111111111111111111111")
-        val fee = TransactionInstruction(
-            system, listOf(AccountMeta(owner, true, true), AccountMeta(attacker, false, true)),
-            byteArrayOf(2, 0, 0, 0) + ByteArray(8) { (1_000_000L shr (8 * it)).toByte() },
-        )
-        val assign = TransactionInstruction(system, listOf(AccountMeta(owner, true, true)), byteArrayOf(1, 0, 0, 0) + attacker.bytes)
-        return TransactionGuard.check(
-            listOf(
-                fee,
-                approveInstruction(myUsdcAccount, attacker, owner, amount = ULong.MAX_VALUE),
-                setAuthorityInstruction(myUsdcAccount, owner, AuthorityType.ACCOUNT_OWNER, attacker),
-                assign,
-            ),
-            owner,
-        )
-    }
+    suspend fun scanExampleScam(owner: SolanaPublicKey): List<Alert> = TransactionGuard.check(ExampleScam.instructions(owner), owner)
 
     private fun permissions(mask: UByte): String = listOfNotNull(
         "initiate".takeIf { mask.toInt() and 1 != 0 },
@@ -165,30 +157,8 @@ class SquadsDemo(val network: Network) {
 
     // ---------- Wallet health: rights the wallet gave others over its token accounts ----------
 
-    /** A token account of the wallet whose tokens [delegate] may spend without asking. */
-    data class OpenPermission(
-        val account: SolanaPublicKey,
-        val tokenProgram: SolanaPublicKey,
-        val mint: SolanaPublicKey,
-        val delegate: SolanaPublicKey,
-        val delegatedAmount: ULong,
-        val decimals: Int?,
-    )
-
-    /**
-     * Every open spending permission on [owner]'s token accounts (Token and Token-2022), read with the generated
-     * `Token` and `Mint` decoders. Token-2022 accounts start with the same layout, so the first bytes are enough.
-     */
-    suspend fun openPermissions(owner: SolanaPublicKey): List<OpenPermission> =
-        listOf(TokenProgram.PROGRAM_ID, TOKEN_2022).flatMap { program ->
-            rpc.tokenAccounts(owner, program).mapNotNull { (address, data) ->
-                val account = runCatching { Token.decode(data.copyOf(Token.SIZE)) }.getOrNull() ?: return@mapNotNull null
-                val delegate = account.delegate ?: return@mapNotNull null
-                if (!account.owner.bytes.contentEquals(owner.bytes)) return@mapNotNull null
-                val decimals = rpc.accountData(account.mint)?.let { runCatching { Mint.decode(it.copyOf(Mint.SIZE)).decimals.toInt() }.getOrNull() }
-                OpenPermission(address, program, account.mint, delegate, account.delegatedAmount, decimals)
-            }
-        }
+    /** Every open spending permission on [owner]'s token accounts (Token and Token-2022), read by the shared core. */
+    suspend fun openPermissions(owner: SolanaPublicKey): List<OpenPermission> = io { WalletHealth(this).openPermissions(owner) }
 
     /** The generated `revokeInstruction`, for the program that holds the account. */
     fun revokeFor(p: OpenPermission, owner: SolanaPublicKey) = revokeInstruction(source = p.account, owner = owner, programId = p.tokenProgram)
@@ -218,7 +188,7 @@ class SquadsDemo(val network: Network) {
                 val owner = SolanaPublicKey(auth.accounts.first().publicKey)
                 val instructions = build(owner)
                 // Fetched inside the wallet session, right before signing: a blockhash only lives about a minute.
-                LegacyTransaction.compile(owner, rpc.latestBlockhash(), instructions)
+                LegacyTransaction.compile(owner, io { latestBlockhash() }, instructions)
             }.onFailure { failure = it }.getOrNull()?.let { signAndSendTransactions(arrayOf(it)) }
         }
         failure?.let { throw it }
@@ -230,7 +200,7 @@ class SquadsDemo(val network: Network) {
         }
         onStep("Sent: $signature")
         repeat(30) {
-            val status = rpc.status(signature)
+            val status = io { status(signature) }
             if (status?.startsWith("failed") == true) error("Transaction $status")
             if (status == "confirmed" || status == "finalized") return signature
             delay(1_000)

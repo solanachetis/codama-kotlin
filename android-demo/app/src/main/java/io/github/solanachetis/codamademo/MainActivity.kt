@@ -75,7 +75,7 @@ private fun DemoScreen(demo: SquadsDemo, sender: ActivityResultSender, onNetwork
     var preview by remember { mutableStateOf<List<String>?>(null) }
     var createAlerts by remember { mutableStateOf<List<Alert>?>(null) }
     var scamAlerts by remember { mutableStateOf<List<Alert>?>(null) }
-    var permissions by remember { mutableStateOf<List<SquadsDemo.OpenPermission>?>(null) }
+    var permissions by remember { mutableStateOf<List<core.OpenPermission>?>(null) }
 
     fun run(label: String, block: suspend () -> Unit) {
         busy = true

@@ -9,8 +9,9 @@ kotlin {
 dependencies {
     // Same library the Solana Mobile docs use for Android native apps.
     implementation("com.solanamobile:web3-solana:0.3.1")
+    // JSON for the core RPC client (plain JVM: no org.json outside Android).
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     testImplementation(kotlin("test"))
-    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 }
 

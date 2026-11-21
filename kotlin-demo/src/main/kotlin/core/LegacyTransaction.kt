@@ -1,4 +1,4 @@
-package io.github.solanachetis.codamademo
+package core
 
 import com.solana.publickey.SolanaPublicKey
 import com.solana.transaction.TransactionInstruction
