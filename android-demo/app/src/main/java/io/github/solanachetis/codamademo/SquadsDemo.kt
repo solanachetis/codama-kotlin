@@ -27,8 +27,11 @@ import codama.generated.token.types.AuthorityType
 import safety.Alert
 import safety.TransactionGuard
 import core.Base58
+import core.ExampleScam
 import core.LegacyTransaction
+import core.OpenPermission
 import core.SolanaRpc
+import core.WalletHealth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -132,28 +135,9 @@ class SquadsDemo(val network: Network) {
     /**
      * What a wallet-draining site asks you to sign behind a "claim your airdrop" button, aimed at [owner]:
      * a harmless-looking 0.001 SOL fee, an unlimited spending permission, the ownership of a token account, and the
-     * wallet itself handed to a program. Built only to be scanned: it is never signed nor sent.
+     * wallet itself handed to a program. Built only to be scanned (by the shared [ExampleScam]): never signed nor sent.
      */
-    suspend fun scanExampleScam(owner: SolanaPublicKey): List<Alert> {
-        val attacker = SolanaPublicKey.from("Attack1111111111111111111111111111111111111")
-        val usdc = SolanaPublicKey.from("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-        val myUsdcAccount = findAssociatedTokenPda(owner, TokenProgram.PROGRAM_ID, usdc)
-        val system = SolanaPublicKey.from("11111111111111111111111111111111")
-        val fee = TransactionInstruction(
-            system, listOf(AccountMeta(owner, true, true), AccountMeta(attacker, false, true)),
-            byteArrayOf(2, 0, 0, 0) + ByteArray(8) { (1_000_000L shr (8 * it)).toByte() },
-        )
-        val assign = TransactionInstruction(system, listOf(AccountMeta(owner, true, true)), byteArrayOf(1, 0, 0, 0) + attacker.bytes)
-        return TransactionGuard.check(
-            listOf(
-                fee,
-                approveInstruction(myUsdcAccount, attacker, owner, amount = ULong.MAX_VALUE),
-                setAuthorityInstruction(myUsdcAccount, owner, AuthorityType.ACCOUNT_OWNER, attacker),
-                assign,
-            ),
-            owner,
-        )
-    }
+    suspend fun scanExampleScam(owner: SolanaPublicKey): List<Alert> = TransactionGuard.check(ExampleScam.instructions(owner), owner)
 
     private fun permissions(mask: UByte): String = listOfNotNull(
         "initiate".takeIf { mask.toInt() and 1 != 0 },
@@ -173,30 +157,8 @@ class SquadsDemo(val network: Network) {
 
     // ---------- Wallet health: rights the wallet gave others over its token accounts ----------
 
-    /** A token account of the wallet whose tokens [delegate] may spend without asking. */
-    data class OpenPermission(
-        val account: SolanaPublicKey,
-        val tokenProgram: SolanaPublicKey,
-        val mint: SolanaPublicKey,
-        val delegate: SolanaPublicKey,
-        val delegatedAmount: ULong,
-        val decimals: Int?,
-    )
-
-    /**
-     * Every open spending permission on [owner]'s token accounts (Token and Token-2022), read with the generated
-     * `Token` and `Mint` decoders. Token-2022 accounts start with the same layout, so the first bytes are enough.
-     */
-    suspend fun openPermissions(owner: SolanaPublicKey): List<OpenPermission> =
-        listOf(TokenProgram.PROGRAM_ID, TOKEN_2022).flatMap { program ->
-            io { tokenAccounts(owner, program) }.mapNotNull { (address, data) ->
-                val account = runCatching { Token.decode(data.copyOf(Token.SIZE)) }.getOrNull() ?: return@mapNotNull null
-                val delegate = account.delegate ?: return@mapNotNull null
-                if (!account.owner.bytes.contentEquals(owner.bytes)) return@mapNotNull null
-                val decimals = io { accountData(account.mint) }?.let { runCatching { Mint.decode(it.copyOf(Mint.SIZE)).decimals.toInt() }.getOrNull() }
-                OpenPermission(address, program, account.mint, delegate, account.delegatedAmount, decimals)
-            }
-        }
+    /** Every open spending permission on [owner]'s token accounts (Token and Token-2022), read by the shared core. */
+    suspend fun openPermissions(owner: SolanaPublicKey): List<OpenPermission> = io { WalletHealth(this).openPermissions(owner) }
 
     /** The generated `revokeInstruction`, for the program that holds the account. */
     fun revokeFor(p: OpenPermission, owner: SolanaPublicKey) = revokeInstruction(source = p.account, owner = owner, programId = p.tokenProgram)
